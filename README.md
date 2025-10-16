@@ -35,12 +35,14 @@ Resume Modifier is a comprehensive web service that leverages artificial intelli
 - **🌐 Interactive API Docs**: `http://localhost:5001/apidocs` (when running locally)
 - **⚡ Quick Setup**: Run `./setup.sh` for automated local setup
 - **🚄 Railway Deploy**: [![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/deploy?referrer=github)
+- **🗄️ Database Test**: Run `python3 test_database.py` to verify database setup
 
 ### 📖 Detailed Documentation
 | Document | Description | Use Case |
 |----------|-------------|----------|
 | [📖 API_DOCUMENTATION.md](./API_DOCUMENTATION.md) | Complete API reference with examples | API integration, development |
 | [🚀 DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) | Local & production deployment | DevOps, setup |
+| [🗄️ DATABASE_SETUP_TROUBLESHOOTING.md](./DATABASE_SETUP_TROUBLESHOOTING.md) | Database setup and troubleshooting guide | Database issues, setup problems |
 | [🚄 RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md) | Railway-specific deployment guide | Cloud deployment |
 | [📊 TASK_TRACKING.md](./TASK_TRACKING.md) | Development progress & achievements | Project status |
 
@@ -51,6 +53,13 @@ Resume Modifier is a comprehensive web service that leverages artificial intelli
 - 🔑 OpenAI API key ([Get one here](https://platform.openai.com/account/api-keys))
 - 💻 Python 3.12+ (for local development)
 - 🗄️ PostgreSQL (handled by Docker)
+
+### ⚠️ Database Configuration Notice
+**Important**: This project is configured for PostgreSQL. If you encounter database connection issues, run:
+```bash
+python3 test_database.py
+```
+See [DATABASE_SETUP_TROUBLESHOOTING.md](./DATABASE_SETUP_TROUBLESHOOTING.md) for detailed troubleshooting steps.
 
 ### 📥 Installation
 
