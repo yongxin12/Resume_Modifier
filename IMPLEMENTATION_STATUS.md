@@ -109,13 +109,13 @@
 3. **Seed Templates**
    ```bash
    # Test the template seeding endpoint
-   curl -X POST http://localhost:5000/api/templates/seed
+   curl -X POST http://localhost:5001/api/templates/seed
    ```
 
 4. **Test Template APIs**
    ```bash
    # Test template listing
-   curl http://localhost:5000/api/templates
+   curl http://localhost:5001/api/templates
    ```
 
 ---
