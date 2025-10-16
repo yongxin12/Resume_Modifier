@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify, redirect, session, current_app, send_file
+from flasgger import swag_from
 from app.extensions import db
 from app.utils.pdf_validator import PDFValidator
 from app.utils.job_validator import JobValidator
@@ -24,6 +25,20 @@ import os
 api = Blueprint('api', __name__)
 
 @api.route('/')
+@swag_from({
+    'tags': ['System'],
+    'summary': 'API root endpoint',
+    'description': 'Simple endpoint to verify the API is running',
+    'responses': {
+        200: {
+            'description': 'API is running',
+            'schema': {
+                'type': 'string',
+                'example': 'Flask App is Running!'
+            }
+        }
+    }
+})
 def index():
     return "Flask App is Running!"
 
@@ -368,12 +383,79 @@ def analyze_with_job():
         }), 500
 
 @api.route('/api/feedback', methods=['PUT'])
+@swag_from({
+    'tags': ['Resume Processing'],
+    'summary': 'Process feedback and updated resume data',
+    'description': 'Process user feedback on resume sections and update resume content based on feedback',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['section', 'updated_resume'],
+                'properties': {
+                    'section': {
+                        'type': 'object',
+                        'required': ['section type'],
+                        'properties': {
+                            'section type': {
+                                'type': 'string',
+                                'description': 'Type of section being updated'
+                            }
+                        }
+                    },
+                    'updated_resume': {
+                        'type': 'object',
+                        'description': 'Updated resume content'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Feedback processed successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'updated_resume': {'type': 'object'}
+                }
+            }
+        },
+        400: {
+            'description': 'Bad request',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 def process_feedback():
     """Process feedback and updated resume data."""
     # Validate request
-    error, status_code, data = FeedbackValidator.validate_request(request)
-    if error:
-        return error, status_code
+    validation_result = FeedbackValidator.validate_request(request)
+    if len(validation_result) == 2:
+        # Error case: (error_response, status_code)
+        return validation_result
+    else:
+        # Success case: (None, None, data)
+        _, _, data = validation_result
     
     try:
         # Extract fields from validated data
@@ -549,7 +631,25 @@ def login():
 # Google OAuth Routes
 @api.route('/auth/google', methods=['GET'])
 def google_auth():
-    """Initiate Google OAuth flow"""
+    """
+    Initiate Google OAuth flow for Google Docs/Drive integration
+    ---
+    tags:
+      - Google Authentication
+    parameters:
+      - name: user_id
+        in: query
+        type: integer
+        description: User ID for authentication (testing only)
+        example: 1
+    responses:
+      302:
+        description: Redirect to Google OAuth authorization URL
+      400:
+        description: Missing user ID or invalid parameters
+      500:
+        description: Server error during OAuth initiation
+    """
     try:
         # Get user_id from query parameter (for testing) or from token (for production)
         user_id = request.args.get('user_id')
@@ -587,7 +687,38 @@ def google_auth():
 
 @api.route('/auth/google/callback', methods=['GET'])
 def google_auth_callback():
-    """Handle Google OAuth callback"""
+    """
+    Handle Google OAuth callback and exchange code for tokens
+    ---
+    tags:
+      - Google Authentication
+    parameters:
+      - name: code
+        in: query
+        type: string
+        required: true
+        description: Authorization code from Google
+      - name: state
+        in: query
+        type: string
+        description: State parameter for CSRF protection
+    responses:
+      200:
+        description: Authentication successful
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Google authentication successful"
+            user_id:
+              type: integer
+              example: 1
+      400:
+        description: Authentication failed or invalid parameters
+      500:
+        description: Server error during authentication
+    """
     try:
         # Get authorization code and state from query parameters
         authorization_code = request.args.get('code')
@@ -626,6 +757,47 @@ def google_auth_callback():
 
 
 @api.route('/auth/google/status', methods=['GET'])
+@swag_from({
+    'tags': ['Google Integration'],
+    'summary': 'Check Google authentication status',
+    'description': 'Check if the user has authenticated with Google and can access Google services',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'Authentication status retrieved',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'authenticated': {'type': 'boolean'},
+                    'email': {'type': 'string', 'description': 'Google account email (if authenticated)'},
+                    'scopes': {
+                        'type': 'array',
+                        'items': {'type': 'string'},
+                        'description': 'Granted Google API scopes'
+                    }
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        500: {
+            'description': 'Internal server error',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def google_auth_status():
     """Check Google authentication status"""
@@ -657,6 +829,41 @@ def google_auth_status():
 
 
 @api.route('/auth/google/revoke', methods=['POST'])
+@swag_from({
+    'tags': ['Google Integration'],
+    'summary': 'Revoke Google authentication',
+    'description': 'Revoke user\'s Google authentication and remove stored credentials',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'Google authentication revoked successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        500: {
+            'description': 'Internal server error',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def google_auth_revoke():
     """Revoke Google authentication"""
@@ -677,6 +884,81 @@ def google_auth_revoke():
 
 
 @api.route('/auth/google/store', methods=['POST'])
+@swag_from({
+    'tags': ['Google Integration'],
+    'summary': 'Store Google authentication tokens manually',
+    'description': 'Manually store Google OAuth tokens for a user account',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['access_token'],
+                'properties': {
+                    'access_token': {
+                        'type': 'string',
+                        'description': 'Google OAuth access token'
+                    },
+                    'refresh_token': {
+                        'type': 'string',
+                        'description': 'Google OAuth refresh token'
+                    },
+                    'scope': {
+                        'type': 'string',
+                        'description': 'OAuth scope permissions'
+                    },
+                    'expires_at': {
+                        'type': 'string',
+                        'format': 'date-time',
+                        'description': 'Token expiration timestamp'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Tokens stored successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'stored_at': {'type': 'string', 'format': 'date-time'}
+                }
+            }
+        },
+        400: {
+            'description': 'Bad request',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        500: {
+            'description': 'Failed to store tokens',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def google_auth_store():
     """Store Google authentication tokens manually"""
@@ -711,6 +993,42 @@ def google_auth_store():
 
 
 @api.route('/auth/google/refresh', methods=['POST'])
+@swag_from({
+    'tags': ['Google Integration'],
+    'summary': 'Refresh Google authentication tokens',
+    'description': 'Refresh expired Google authentication tokens to maintain access to Google services',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'Tokens refreshed successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'expires_at': {'type': 'string', 'format': 'date-time'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        500: {
+            'description': 'Failed to refresh tokens',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required  
 def google_auth_refresh():
     """Refresh expired Google authentication tokens"""
@@ -737,7 +1055,49 @@ def google_auth_refresh():
 @api.route('/api/save_resume', methods=['PUT'])
 @token_required
 def save_resume():
-    """Save or update a resume for the user"""
+    """
+    Save or update a resume for the authenticated user
+    ---
+    tags:
+      - Resume Management
+    security:
+      - Bearer: []
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - updated_resume
+            - resume_title
+          properties:
+            updated_resume:
+              type: object
+              description: Complete resume data structure
+            resume_title:
+              type: string
+              description: Title for the resume
+              example: "Software Engineer Resume"
+    responses:
+      200:
+        description: Resume saved successfully
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Resume saved successfully"
+            resume_id:
+              type: integer
+              example: 1
+      400:
+        description: Missing required data
+      401:
+        description: Unauthorized - Invalid or missing token
+      500:
+        description: Server error during save operation
+    """
     # Get user ID from token
     user_id = request.user.get('user_id')
     
@@ -804,7 +1164,45 @@ def save_resume():
 @api.route('/api/get_resume_list', methods=['GET'])
 @token_required
 def get_resume_list():
-    """Get list of resumes for the current user"""
+    """
+    Get list of all resumes for the authenticated user
+    ---
+    tags:
+      - Resume Management
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Resume list retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  resume_id:
+                    type: integer
+                    description: Unique resume identifier
+                    example: 1
+                  resume_title:
+                    type: string
+                    description: Resume title
+                    example: "Software Engineer Resume"
+                  created_at:
+                    type: string
+                    format: date-time
+                    description: Creation timestamp
+                    example: "2025-10-16T12:00:00"
+      401:
+        description: Unauthorized - Invalid or missing token
+      500:
+        description: Server error during retrieval
+    """
     user_id = request.user.get('user_id')
     
     try:
@@ -832,7 +1230,51 @@ def get_resume_list():
 @api.route('/api/get_resume/<int:resume_id>', methods=['GET'])
 @token_required
 def get_resume(resume_id):
-    """Get a specific resume by ID"""
+    """
+    Get a specific resume by ID for the authenticated user
+    ---
+    tags:
+      - Resume Management
+    security:
+      - Bearer: []
+    parameters:
+      - name: resume_id
+        in: path
+        type: integer
+        required: true
+        description: Resume ID to retrieve
+        example: 1
+    responses:
+      200:
+        description: Resume retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              properties:
+                resume_id:
+                  type: integer
+                  example: 1
+                resume_title:
+                  type: string
+                  example: "Software Engineer Resume"
+                parsed_resume:
+                  type: object
+                  description: Complete resume data structure
+                created_at:
+                  type: string
+                  format: date-time
+      404:
+        description: Resume not found
+      401:
+        description: Unauthorized - Invalid or missing token
+      500:
+        description: Server error during retrieval
+    """
     user_id = request.user.get('user_id')
     
     try:
@@ -862,6 +1304,99 @@ def get_resume(resume_id):
         }), 500
 
 @api.route('/api/put_profile', methods=['PUT'])
+@swag_from({
+    'tags': ['User Management'],
+    'summary': 'Update user profile',
+    'description': 'Update user profile information including name, email, location, and bio',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'first_name': {
+                        'type': 'string',
+                        'description': 'User first name'
+                    },
+                    'last_name': {
+                        'type': 'string',
+                        'description': 'User last name'
+                    },
+                    'email': {
+                        'type': 'string',
+                        'format': 'email',
+                        'description': 'User email address'
+                    },
+                    'city': {
+                        'type': 'string',
+                        'description': 'User city'
+                    },
+                    'country': {
+                        'type': 'string',
+                        'description': 'User country'
+                    },
+                    'bio': {
+                        'type': 'string',
+                        'description': 'User biography'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Profile updated successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'profile': {
+                        'type': 'object',
+                        'properties': {
+                            'id': {'type': 'integer'},
+                            'first_name': {'type': 'string'},
+                            'last_name': {'type': 'string'},
+                            'email': {'type': 'string'},
+                            'city': {'type': 'string'},
+                            'country': {'type': 'string'},
+                            'bio': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        400: {
+            'description': 'Bad request',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'User not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def put_profile():
     """Update user profile"""
@@ -902,7 +1437,51 @@ def put_profile():
 @api.route('/api/get_profile', methods=['GET'])
 @token_required
 def get_profile():
-    """Get user profile"""
+    """
+    Get user profile information
+    ---
+    tags:
+      - User Profile
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: User profile retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              properties:
+                profile:
+                  type: object
+                  properties:
+                    first_name:
+                      type: string
+                      example: "John"
+                    last_name:
+                      type: string
+                      example: "Doe"
+                    email:
+                      type: string
+                      example: "john@example.com"
+                    city:
+                      type: string
+                      example: "New York"
+                    country:
+                      type: string
+                      example: "USA"
+                    bio:
+                      type: string
+                      example: "Software Engineer"
+      404:
+        description: User not found
+      401:
+        description: Unauthorized - Invalid or missing token
+    """
     user_id = request.user.get('user_id')
     
     try:
@@ -1046,62 +1625,89 @@ def score_resume():
 # ===== GOOGLE DOCS EXPORT ENDPOINTS =====
 
 @api.route('/api/resume/export/gdocs', methods=['POST'])
+@swag_from({
+    'tags': ['Document Export'],
+    'summary': 'Export resume to Google Docs',
+    'description': 'Export a resume to Google Docs using a specified template',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['resume_id', 'template_id'],
+                'properties': {
+                    'resume_id': {
+                        'type': 'integer',
+                        'description': 'Resume ID to export'
+                    },
+                    'template_id': {
+                        'type': 'integer',
+                        'description': 'Template ID to apply'
+                    },
+                    'document_title': {
+                        'type': 'string',
+                        'description': 'Optional document title'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Resume exported successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'document_id': {'type': 'string'},
+                    'document_url': {'type': 'string'},
+                    'message': {'type': 'string'}
+                }
+            }
+        },
+        400: {
+            'description': 'Bad request',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        403: {
+            'description': 'Google authentication required',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'Resume or template not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def export_resume_to_google_docs():
-    """
-    Export resume to Google Docs
-    ---
-    tags:
-      - Google Docs Export
-    security:
-      - Bearer: []
-    parameters:
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          properties:
-            resume_id:
-              type: integer
-              description: Resume ID to export
-            template_id:
-              type: integer
-              description: Template ID to apply
-            document_title:
-              type: string
-              description: Optional document title
-          required:
-            - resume_id
-            - template_id
-    responses:
-      200:
-        description: Google Docs document created successfully
-        schema:
-          type: object
-          properties:
-            status:
-              type: integer
-              example: 200
-            data:
-              type: object
-              properties:
-                document_id:
-                  type: string
-                  description: Google Docs document ID
-                shareable_url:
-                  type: string
-                  description: Shareable Google Docs URL
-                generated_document_id:
-                  type: integer
-                  description: Database record ID
-      401:
-        description: Google authentication required
-      404:
-        description: Resume or template not found
-      500:
-        description: Export failed
-    """
+    """Export resume to Google Docs"""
     data = request.get_json()
     user_id = request.user.get('user_id')
     current_user = User.query.get(user_id)
@@ -1229,6 +1835,77 @@ def export_resume_to_google_docs():
 
 
 @api.route('/api/resume/generate', methods=['POST'])
+@swag_from({
+    'tags': ['Resume Processing'],
+    'summary': 'Generate optimized resume content using AI',
+    'description': 'Generate optimized resume content using AI based on user data and job description',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['resume_id', 'job_description_id'],
+                'properties': {
+                    'resume_id': {
+                        'type': 'integer',
+                        'description': 'Resume ID to optimize'
+                    },
+                    'job_description_id': {
+                        'type': 'integer',
+                        'description': 'Job description ID for optimization'
+                    },
+                    'template_id': {
+                        'type': 'integer',
+                        'description': 'Template ID to apply'
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Resume generated successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'resume': {'type': 'object'},
+                    'generated_content': {'type': 'object'}
+                }
+            }
+        },
+        400: {
+            'description': 'Bad request',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'Resume or job description not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def generate_resume():
     """
@@ -1290,6 +1967,56 @@ def generate_resume():
 
 
 @api.route('/api/resume/export/pdf/<document_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Document Export'],
+    'summary': 'Export Google Docs document as PDF',
+    'description': 'Export a previously created Google Docs document as a PDF file',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'document_id',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'Google Docs document ID'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'PDF file',
+            'schema': {
+                'type': 'file'
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        403: {
+            'description': 'Access denied',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'Document not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def export_google_docs_as_pdf(document_id):
     """
@@ -1341,6 +2068,56 @@ def export_google_docs_as_pdf(document_id):
 
 
 @api.route('/api/resume/export/docx/<document_id>', methods=['GET'])
+@swag_from({
+    'tags': ['Document Export'],
+    'summary': 'Export Google Docs document as DOCX',
+    'description': 'Export a previously created Google Docs document as a DOCX file',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'document_id',
+            'in': 'path',
+            'required': True,
+            'type': 'string',
+            'description': 'Google Docs document ID'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'DOCX file',
+            'schema': {
+                'type': 'file'
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        403: {
+            'description': 'Access denied',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'Document not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def export_google_docs_as_docx(document_id):
     """
@@ -1385,6 +2162,53 @@ def export_google_docs_as_docx(document_id):
 
 
 @api.route('/api/documents', methods=['GET'])
+@swag_from({
+    'tags': ['Document Management'],
+    'summary': 'List user generated documents',
+    'description': 'Get list of all documents generated by the user',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'List of user documents',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'documents': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'object',
+                            'properties': {
+                                'id': {'type': 'integer'},
+                                'google_doc_id': {'type': 'string'},
+                                'document_title': {'type': 'string'},
+                                'shareable_url': {'type': 'string'},
+                                'created_at': {'type': 'string', 'format': 'date-time'}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'User not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def list_user_generated_documents():
     """
@@ -1428,6 +2252,59 @@ def list_user_generated_documents():
 
 
 @api.route('/api/documents/<int:document_id>', methods=['DELETE'])
+@swag_from({
+    'tags': ['Document Management'],
+    'summary': 'Delete a generated document',
+    'description': 'Delete a generated document from both the database and Google Drive',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'document_id',
+            'in': 'path',
+            'required': True,
+            'type': 'integer',
+            'description': 'ID of the document to delete'
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Document deleted successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        403: {
+            'description': 'Access denied',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'Document not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def delete_generated_document(document_id):
     """
@@ -1477,6 +2354,99 @@ def delete_generated_document(document_id):
 
 
 @api.route('/api/documents/<int:document_id>/sharing', methods=['PUT'])
+@swag_from({
+    'tags': ['Document Management'],
+    'summary': 'Update document sharing permissions',
+    'description': 'Update sharing permissions for a generated Google Docs document',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'document_id',
+            'in': 'path',
+            'required': True,
+            'type': 'integer',
+            'description': 'ID of the document to update sharing for'
+        },
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'required': ['sharing_settings'],
+                'properties': {
+                    'sharing_settings': {
+                        'type': 'object',
+                        'properties': {
+                            'type': {
+                                'type': 'string',
+                                'enum': ['user', 'domain', 'anyone'],
+                                'description': 'Type of sharing permission'
+                            },
+                            'role': {
+                                'type': 'string',
+                                'enum': ['reader', 'writer', 'commenter'],
+                                'description': 'Access role for the shared document'
+                            },
+                            'emailAddress': {
+                                'type': 'string',
+                                'description': 'Email address (required for user type)'
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'Sharing settings updated successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'message': {'type': 'string'},
+                    'sharing_settings': {'type': 'object'}
+                }
+            }
+        },
+        400: {
+            'description': 'Bad request',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        403: {
+            'description': 'Access denied',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        },
+        404: {
+            'description': 'Document not found',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'error': {'type': 'string'}
+                }
+            }
+        }
+    }
+})
 @token_required
 def update_document_sharing(document_id):
     """
