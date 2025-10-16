@@ -25,4 +25,4 @@ ENV PYTHONPATH=/app
 
 # Use the entrypoint script
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python", "-m", "app.server"]
+CMD ["python", "wsgi.py"]
