@@ -1117,7 +1117,7 @@ def export_resume_to_google_docs():
     # Verify Google auth has required scopes
     required_scopes = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive']
     if not google_auth.scope or not all(scope in google_auth.scope for scope in required_scopes):
-        return jsonify({"error": "insufficient_google_scopes"}), 403
+        return jsonify({"error": "insufficient_scope"}), 403
     
     try:
         # Get resume and template

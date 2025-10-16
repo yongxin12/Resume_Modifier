@@ -1,51 +1,12 @@
 import pytest
 from app import create_app
 import os
-from dotenv import load_dotenv
 import io
 from app.extensions import db
 from app.models.temp import User, Resume
 from sqlalchemy import text
 
-load_dotenv()  # Load environment variables for tests too
-
-@pytest.fixture
-def client():
-    """Test client fixture for Flask app"""
-    app = create_app()
-    app.config['TESTING'] = True
-    with app.test_client() as client:
-        with app.app_context():
-            yield client
-
-@pytest.fixture(autouse=True)
-def setup_test_database():
-    """Setup/cleanup for tests without affecting production data"""
-    app = create_app()
-    with app.app_context():
-        # First clean up any existing test data
-        try:
-            # Delete resumes first (due to foreign key constraint)
-            db.session.execute(text('DELETE FROM resumes WHERE user_id IN (SELECT id FROM users WHERE email LIKE \'%@example.com\')'))
-            # Then delete test users
-            db.session.execute(text('DELETE FROM users WHERE email LIKE \'%@example.com\''))
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print(f"Cleanup error: {e}")
-
-        yield  # Run the test
-
-        # Clean up after test
-        try:
-            # Delete resumes first (due to foreign key constraint)
-            db.session.execute(text('DELETE FROM resumes WHERE user_id IN (SELECT id FROM users WHERE email LIKE \'%@example.com\')'))
-            # Then delete test users
-            db.session.execute(text('DELETE FROM users WHERE email LIKE \'%@example.com\''))
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print(f"Cleanup error: {e}")
+# Note: Using client fixture from conftest.py which provides proper test database setup
 
 def test_pdf_upload(client):
     """Test PDF upload and parsing"""
