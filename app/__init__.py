@@ -3,23 +3,45 @@
 
 from flask import Flask
 from flask_cors import CORS
+from flasgger import Swagger
 from app.extensions import db, migrate, login_manager
 import os
 from dotenv import load_dotenv
 
 def create_app(config=None):
-    # Load environment variables first
-    load_dotenv()
-
     # Create app
     app = Flask(__name__)
     
-    # Configure app
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql+pymysql://mysql:Mintmelon666!@localhost:3306/resume_app')
+    # Load environment variables first (but only if not testing)
+    if not config or not config.get('TESTING'):
+        load_dotenv()
+        app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql+pymysql://mysql:Mintmelon666!@localhost:3306/resume_app')
+    else:
+        # For testing, use SQLite by default
+        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+        
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    
+    # Override with custom config if provided
+    if config:
+        app.config.update(config)
+    
+    # Swagger configuration
+    app.config['SWAGGER'] = {
+        'title': 'Resume Editor API',
+        'uiversion': 3,
+        'version': '1.0.0',
+        'description': 'API documentation for Resume Editor application with AI-powered resume parsing, analysis, and scoring',
+        'termsOfService': '',
+        'contact': {
+            'name': 'API Support',
+            'email': 'support@resumeeditor.com'
+        }
+    }
     
     # Initialize extensions
     CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+    swagger = Swagger(app)
     db.init_app(app)
     
     # Import models to ensure they're known to Flask-Migrate
@@ -27,7 +49,7 @@ def create_app(config=None):
     # This ensures they are registered with Flask-SQLAlchemy
     with app.app_context():
         # Import models and explicitly register them with Flask-SQLAlchemy
-        from app.models.db import User, Resume, JobDescription
+        from app.models.temp import User, Resume, JobDescription
         # Make sure the models are registered with db.metadata
         for model in [User, Resume, JobDescription]:
             if hasattr(model, '__table__'):

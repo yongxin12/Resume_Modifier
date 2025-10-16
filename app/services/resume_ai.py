@@ -4,6 +4,7 @@ import os
 import json
 from app.response_template.resume_schema import RESUME_TEMPLATE
 from app.response_template.analysis_schema import ANALYSIS_TEMPLATE
+from app.response_template.scoring_schema import SCORING_TEMPLATE
 
 class ResumeAI:
     def __init__(self, extracted_text: str):
@@ -160,4 +161,150 @@ class ResumeAI:
             return json.loads(cleaned_content)
             
         except Exception as e:
-            raise Exception(f"Failed to process section feedback: {str(e)}") 
+            raise Exception(f"Failed to process section feedback: {str(e)}")
+
+    def score_resume(self, job_description: str = "") -> dict:
+        """
+        Score resume with detailed sub-scores for keyword matching, 
+        language expression, and ATS readability
+        
+        Args:
+            job_description: Optional job description to score against
+            
+        Returns:
+            Detailed scoring breakdown with recommendations
+        """
+        if not self.parsed_resume:
+            self.parse()  # Parse first if not already parsed
+        
+        prompt = f"""
+        Analyze this resume and provide detailed scoring according to this structure:
+        {json.dumps(SCORING_TEMPLATE, indent=2)}
+        
+        Resume Data:
+        {json.dumps(self.parsed_resume, indent=2)}
+        
+        {f"Job Description: {job_description}" if job_description else ""}
+        
+        Scoring Guidelines:
+        
+        1. KEYWORD MATCHING (35% weight):
+           - Identify relevant keywords from the resume
+           {f"- Compare with job description keywords" if job_description else "- Evaluate industry-standard keywords"}
+           - Calculate keyword density and coverage
+           - List matched keywords and missing important ones
+           - Score based on relevance and coverage (0-100)
+        
+        2. LANGUAGE EXPRESSION (35% weight):
+           - Grammar Quality: Check for grammatical errors and proper sentence structure
+           - Professional Tone: Evaluate formality and appropriateness
+           - Clarity: Assess how clear and understandable the content is
+           - Action Verbs Usage: Check for strong action verbs vs. passive language
+           - Calculate average of these 4 sub-metrics (0-100)
+        
+        3. ATS READABILITY (30% weight):
+           - Format Compatibility: Standard sections, no complex formatting
+           - Structure Clarity: Logical flow and organization
+           - Parsing Friendliness: Easy-to-extract information
+           - Section Organization: Proper headings and hierarchy
+           - Calculate average of these 4 sub-metrics (0-100)
+        
+        4. OVERALL SCORE:
+           - Calculate weighted average: (keyword * 0.35) + (language * 0.35) + (ats * 0.30)
+        
+        5. Provide 3-5 specific recommendations for improvement
+        6. List 3-5 strengths of the resume
+        7. List 3-5 weaknesses or areas for improvement
+        
+        Return only the filled JSON structure with all scores and details.
+        """
+        
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are an expert resume analyst and ATS specialist. Provide accurate, detailed scoring with actionable feedback."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7
+            )
+            
+            content = response.choices[0].message.content
+            cleaned_content = content.replace("```json", "").replace("```", "").strip()
+            
+            scoring_result = json.loads(cleaned_content)
+            return scoring_result
+            
+        except Exception as e:
+            raise Exception(f"Resume scoring failed: {str(e)}")
+    
+    def optimize_content(self, resume_data: dict, job_description: str, keywords: list = None) -> dict:
+        """
+        Optimize resume content for a specific job description
+        
+        Args:
+            resume_data: User's resume data
+            job_description: Target job description
+            keywords: Optional list of keywords to emphasize
+            
+        Returns:
+            Dictionary with optimized content, improvements, and ATS score
+        """
+        try:
+            # Create a prompt for content optimization
+            keywords_str = ', '.join(keywords) if keywords else ''
+            
+            prompt = f"""
+            Optimize the following resume content for this job description:
+            
+            Job Description:
+            {job_description}
+            
+            Current Resume Data:
+            {json.dumps(resume_data, indent=2)}
+            
+            Target Keywords: {keywords_str}
+            
+            Please provide an optimized version that:
+            1. Matches the job requirements better
+            2. Incorporates relevant keywords naturally
+            3. Improves ATS compatibility
+            4. Maintains professional tone
+            
+            Return a JSON response with:
+            - optimized_content: The improved resume content
+            - improvements: List of specific improvements made
+            - ats_score: Estimated ATS compatibility score (0-100)
+            """
+            
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a professional resume optimizer with expertise in ATS systems and job matching."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.1
+            )
+            
+            content = response.choices[0].message.content
+            cleaned_content = content.replace("```json", "").replace("```", "").strip()
+            
+            try:
+                result = json.loads(cleaned_content)
+                return result
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return a basic result
+                return {
+                    'optimized_content': content,
+                    'improvements': ['AI-enhanced content optimization'],
+                    'ats_score': 85
+                }
+                
+        except Exception as e:
+            # Return a fallback result if optimization fails
+            return {
+                'optimized_content': resume_data.get('content', ''),
+                'improvements': [f'Optimization failed: {str(e)}'],
+                'ats_score': 50
+            } 

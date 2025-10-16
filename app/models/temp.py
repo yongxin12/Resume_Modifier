@@ -106,6 +106,10 @@ class GoogleAuth(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    google_user_id = db.Column(db.String(100))  # Google user ID
+    email = db.Column(db.String(100))  # Google email
+    name = db.Column(db.String(200))  # Google display name
+    picture = db.Column(db.String(500))  # Google profile picture URL
     access_token = db.Column(db.Text, nullable=False)
     refresh_token = db.Column(db.Text, nullable=False)
     token_expires_at = db.Column(db.DateTime, nullable=False)
