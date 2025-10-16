@@ -4,6 +4,7 @@ from app.utils.pdf_validator import PDFValidator
 from app.utils.job_validator import JobValidator
 from app.utils.parse_pdf import parse_pdf_file
 from app.services.resume_ai import ResumeAI
+from app.services.template_service import TemplateService
 from app.response_template.resume_schema import RESUME_TEMPLATE
 from app.models.temp import User, Resume, JobDescription
 from app.utils.feedback_validator import FeedbackValidator
@@ -18,9 +19,97 @@ api = Blueprint('api', __name__)
 def index():
     return "Flask App is Running!"
 
+@api.route('/health', methods=['GET'])
+def health_check():
+    """
+    Health check endpoint to verify service status
+    ---
+    tags:
+      - System
+    responses:
+      200:
+        description: Service is healthy
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: healthy
+            service:
+              type: string
+              example: Resume Editor API
+            timestamp:
+              type: string
+              format: date-time
+            components:
+              type: object
+              properties:
+                database:
+                  type: string
+                  example: connected
+                openai:
+                  type: string
+                  example: configured
+      503:
+        description: Service is unhealthy
+    """
+    health_status = {
+        "status": "healthy",
+        "service": "Resume Editor API",
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "components": {}
+    }
+    
+    try:
+        # Check database connectivity
+        db.session.execute(db.text('SELECT 1'))
+        health_status["components"]["database"] = "connected"
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["components"]["database"] = f"disconnected: {str(e)}"
+    
+    # Check OpenAI API key configuration
+    import os
+    if os.getenv('OPENAI_API_KEY'):
+        health_status["components"]["openai"] = "configured"
+    else:
+        health_status["components"]["openai"] = "not configured"
+    
+    status_code = 200 if health_status["status"] == "healthy" else 503
+    return jsonify(health_status), status_code
+
 @api.route('/api/pdfupload', methods=['POST'])
 def upload_pdf():
-    """Upload PDF and process resume"""
+    """
+    Upload PDF and process resume
+    ---
+    tags:
+      - Resume Processing
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: file
+        in: formData
+        type: file
+        required: true
+        description: PDF file containing the resume
+    responses:
+      200:
+        description: Resume successfully parsed
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              description: Parsed resume data structure
+      400:
+        description: Invalid request or file format
+      500:
+        description: Resume processing failed
+    """
     
     # Validate request
     error, status_code = PDFValidator.validate_upload_request(request)
@@ -43,15 +132,208 @@ def upload_pdf():
             "data": parsed_resume
         }), 200
     
+        except Exception as e:
+            return jsonify({
+                "error": "Failed to score resume",
+                "details": str(e)
+            }), 500
+
+
+@api.route('/api/templates', methods=['GET'])
+def get_templates():
+    """
+    Get all available resume templates
+    ---
+    tags:
+      - Templates
+    responses:
+      200:
+        description: Templates retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 1
+                  name:
+                    type: string
+                    example: "Professional Modern"
+                  description:
+                    type: string
+                    example: "Clean, modern design with blue accents"
+                  style_config:
+                    type: object
+                    description: Template styling configuration
+                  sections:
+                    type: array
+                    items:
+                      type: string
+                    example: ["header", "summary", "experience", "education", "skills"]
+                  created_at:
+                    type: string
+                    format: date-time
+      500:
+        description: Failed to retrieve templates
+    """
+    try:
+        templates = TemplateService.get_all_templates()
+        
+        return jsonify({
+            "status": 200,
+            "data": templates
+        }), 200
+        
     except Exception as e:
         return jsonify({
-            "error": "Resume processing failed", 
+            "error": "Failed to retrieve templates",
             "details": str(e)
         }), 500
 
-@api.route('/api/job_description_upload', methods=['POST'])
+
+@api.route('/api/templates/<int:template_id>', methods=['GET'])
+def get_template(template_id):
+    """
+    Get a specific template by ID
+    ---
+    tags:
+      - Templates
+    parameters:
+      - name: template_id
+        in: path
+        type: integer
+        required: true
+        description: Template ID to retrieve
+    responses:
+      200:
+        description: Template retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+                description:
+                  type: string
+                style_config:
+                  type: object
+                sections:
+                  type: array
+                  items:
+                    type: string
+      404:
+        description: Template not found
+      500:
+        description: Failed to retrieve template
+    """
+    try:
+        template = TemplateService.get_template_by_id(template_id)
+        
+        if not template:
+            return jsonify({
+                "error": "Template not found"
+            }), 404
+        
+        return jsonify({
+            "status": 200,
+            "data": template
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to retrieve template",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/templates/seed', methods=['POST'])
+def seed_templates():
+    """
+    Seed default templates (development/admin endpoint)
+    ---
+    tags:
+      - Templates
+    responses:
+      200:
+        description: Templates seeded successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            message:
+              type: string
+              example: "Default templates seeded successfully"
+      500:
+        description: Failed to seed templates
+    """
+    try:
+        TemplateService.seed_default_templates()
+        
+        return jsonify({
+            "status": 200,
+            "message": "Default templates seeded successfully"
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to seed templates",
+            "details": str(e)
+        }), 500@api.route('/api/job_description_upload', methods=['POST'])
 def analyze_with_job():
-    """Analyze resume with job description"""
+    """
+    Analyze resume against job description
+    ---
+    tags:
+      - Resume Analysis
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - updated_resume
+            - job_description
+          properties:
+            updated_resume:
+              type: object
+              description: Parsed resume data structure
+            job_description:
+              type: string
+              description: Job description text to analyze against
+    responses:
+      200:
+        description: Analysis completed successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              description: Detailed analysis with scores and recommendations
+      400:
+        description: Invalid request data
+      500:
+        description: Analysis failed
+    """
     # Validate request
     error, status_code, data = JobValidator.validate_request(request)
     if error:
@@ -112,6 +394,48 @@ def process_feedback():
 
 @api.route('/api/register', methods=['POST'])
 def register():
+    """
+    Register a new user
+    ---
+    tags:
+      - Authentication
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - password
+          properties:
+            email:
+              type: string
+              format: email
+              example: user@example.com
+            password:
+              type: string
+              format: password
+              example: SecurePassword123!
+    responses:
+      201:
+        description: User registered successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 201
+            user:
+              type: object
+              properties:
+                email:
+                  type: string
+      400:
+        description: Invalid input or email already registered
+      500:
+        description: Registration failed
+    """
     data = request.get_json()
     
     # Validate input
@@ -146,6 +470,50 @@ def register():
 
 @api.route('/api/login', methods=['POST'])
 def login():
+    """
+    User login
+    ---
+    tags:
+      - Authentication
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - password
+          properties:
+            email:
+              type: string
+              format: email
+              example: user@example.com
+            password:
+              type: string
+              format: password
+    responses:
+      200:
+        description: Login successful
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success
+            user:
+              type: object
+              properties:
+                email:
+                  type: string
+            token:
+              type: string
+              description: JWT authentication token
+      400:
+        description: Missing credentials
+      401:
+        description: Invalid credentials
+    """
     data = request.get_json()
     
     # Validate input
@@ -359,5 +727,275 @@ def get_profile():
     except Exception as e:
         return jsonify({
             "error": "Failed to fetch profile",
+            "details": str(e)
+        }), 500
+
+@api.route('/api/resume/score', methods=['POST'])
+def score_resume():
+    """
+    Score resume with AI-powered analysis
+    ---
+    tags:
+      - Resume Scoring
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - resume
+          properties:
+            resume:
+              type: object
+              description: Parsed resume data structure
+            job_description:
+              type: string
+              description: Optional job description to score against
+    responses:
+      200:
+        description: Resume scored successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              properties:
+                overall_score:
+                  type: number
+                  example: 85.5
+                scores:
+                  type: object
+                  properties:
+                    keyword_matching:
+                      type: object
+                      properties:
+                        score:
+                          type: number
+                        weight:
+                          type: number
+                        details:
+                          type: object
+                    language_expression:
+                      type: object
+                      properties:
+                        score:
+                          type: number
+                        weight:
+                          type: number
+                        details:
+                          type: object
+                    ats_readability:
+                      type: object
+                      properties:
+                        score:
+                          type: number
+                        weight:
+                          type: number
+                        details:
+                          type: object
+                recommendations:
+                  type: array
+                  items:
+                    type: string
+                strengths:
+                  type: array
+                  items:
+                    type: string
+                weaknesses:
+                  type: array
+                  items:
+                    type: string
+      400:
+        description: Invalid request data
+      500:
+        description: Scoring failed
+    """
+    data = request.get_json()
+    
+    # Validate input
+    if not data or 'resume' not in data:
+        return jsonify({"error": "Resume data is required"}), 400
+    
+    try:
+        # Get optional job description
+        job_description = data.get('job_description', '')
+        
+        # Create ResumeAI instance with existing parsed resume
+        resume_processor = ResumeAI("")
+        resume_processor.parsed_resume = data['resume']
+        
+        # Score the resume
+        scoring_result = resume_processor.score_resume(job_description)
+        
+        return jsonify({
+            "status": 200,
+            "data": scoring_result
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to score resume",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/templates', methods=['GET'])
+def get_templates():
+    """
+    Get all available resume templates
+    ---
+    tags:
+      - Templates
+    responses:
+      200:
+        description: Templates retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 1
+                  name:
+                    type: string
+                    example: "Professional Modern"
+                  description:
+                    type: string
+                    example: "Clean, modern design with blue accents"
+                  style_config:
+                    type: object
+                    description: Template styling configuration
+                  sections:
+                    type: array
+                    items:
+                      type: string
+                    example: ["header", "summary", "experience", "education", "skills"]
+                  created_at:
+                    type: string
+                    format: date-time
+      500:
+        description: Failed to retrieve templates
+    """
+    try:
+        templates = TemplateService.get_all_templates()
+        
+        return jsonify({
+            "status": 200,
+            "data": templates
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to retrieve templates",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/templates/<int:template_id>', methods=['GET'])
+def get_template(template_id):
+    """
+    Get a specific template by ID
+    ---
+    tags:
+      - Templates
+    parameters:
+      - name: template_id
+        in: path
+        type: integer
+        required: true
+        description: Template ID to retrieve
+    responses:
+      200:
+        description: Template retrieved successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+                description:
+                  type: string
+                style_config:
+                  type: object
+                sections:
+                  type: array
+                  items:
+                    type: string
+      404:
+        description: Template not found
+      500:
+        description: Failed to retrieve template
+    """
+    try:
+        template = TemplateService.get_template_by_id(template_id)
+        
+        if not template:
+            return jsonify({
+                "error": "Template not found"
+            }), 404
+        
+        return jsonify({
+            "status": 200,
+            "data": template
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to retrieve template",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/templates/seed', methods=['POST'])
+def seed_templates():
+    """
+    Seed default templates (development/admin endpoint)
+    ---
+    tags:
+      - Templates
+    responses:
+      200:
+        description: Templates seeded successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            message:
+              type: string
+              example: "Default templates seeded successfully"
+      500:
+        description: Failed to seed templates
+    """
+    try:
+        TemplateService.seed_default_templates()
+        
+        return jsonify({
+            "status": 200,
+            "message": "Default templates seeded successfully"
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to seed templates",
             "details": str(e)
         }), 500
