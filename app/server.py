@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, redirect, session, current_app
+from flask import Blueprint, request, jsonify, redirect, session, current_app, send_file
 from app.extensions import db
 from app.utils.pdf_validator import PDFValidator
 from app.utils.job_validator import JobValidator
@@ -6,12 +6,17 @@ from app.utils.parse_pdf import parse_pdf_file
 from app.services.resume_ai import ResumeAI
 from app.services.template_service import TemplateService
 from app.services.google_auth import GoogleAuthService
+from app.services.google_docs_service import GoogleDocsService
+from app.services.google_drive_service import GoogleDriveService
+from app.services.pdf_generator import PDFGenerator
 from app.response_template.resume_schema import RESUME_TEMPLATE
-from app.models.temp import User, Resume, JobDescription
+from app.models.temp import User, Resume, JobDescription, GoogleAuth, ResumeTemplate, GeneratedDocument
 from app.utils.feedback_validator import FeedbackValidator
 from app.utils.jwt_utils import generate_token, token_required
 from app.utils.profile_validator import ProfileValidator
 import datetime
+import io
+import os
 
 # Create blueprint
 api = Blueprint('api', __name__)
@@ -666,6 +671,64 @@ def google_auth_revoke():
         return jsonify({"error": "Failed to revoke authentication"}), 500
 
 
+@api.route('/auth/google/store', methods=['POST'])
+@token_required
+def google_auth_store():
+    """Store Google authentication tokens manually"""
+    try:
+        user_id = request.user.get('user_id')
+        data = request.get_json()
+        
+        if not data or 'access_token' not in data:
+            return jsonify({"error": "Missing access token"}), 400
+        
+        google_auth_service = GoogleAuthService()
+        
+        # Store tokens in database
+        success = google_auth_service.store_tokens(
+            user_id,
+            data['access_token'],
+            data.get('refresh_token'),
+            data.get('expires_in', 3600)
+        )
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Google authentication tokens stored successfully"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to store tokens"}), 500
+            
+    except Exception as e:
+        current_app.logger.error(f"Google auth store error: {str(e)}")
+        return jsonify({"error": "Failed to store authentication tokens"}), 500
+
+
+@api.route('/auth/google/refresh', methods=['POST'])
+@token_required  
+def google_auth_refresh():
+    """Refresh expired Google authentication tokens"""
+    try:
+        user_id = request.user.get('user_id')
+        google_auth_service = GoogleAuthService()
+        
+        # Refresh tokens
+        success = google_auth_service.refresh_tokens(user_id)
+        
+        if success:
+            return jsonify({
+                "status": "success",
+                "message": "Google authentication tokens refreshed successfully"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to refresh tokens"}), 401
+            
+    except Exception as e:
+        current_app.logger.error(f"Google auth refresh error: {str(e)}")
+        return jsonify({"error": "Failed to refresh authentication tokens"}), 500
+
+
 @api.route('/api/save_resume', methods=['PUT'])
 @token_required
 def save_resume():
@@ -971,6 +1034,393 @@ def score_resume():
     except Exception as e:
         return jsonify({
             "error": "Failed to score resume",
+            "details": str(e)
+        }), 500
+
+
+# ===== GOOGLE DOCS EXPORT ENDPOINTS =====
+
+@api.route('/api/resume/export/gdocs', methods=['POST'])
+@token_required
+def export_resume_to_google_docs():
+    """
+    Export resume to Google Docs
+    ---
+    tags:
+      - Google Docs Export
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            resume_id:
+              type: integer
+              description: Resume ID to export
+            template_id:
+              type: integer
+              description: Template ID to apply
+            document_title:
+              type: string
+              description: Optional document title
+          required:
+            - resume_id
+            - template_id
+    responses:
+      200:
+        description: Google Docs document created successfully
+        schema:
+          type: object
+          properties:
+            status:
+              type: integer
+              example: 200
+            data:
+              type: object
+              properties:
+                document_id:
+                  type: string
+                  description: Google Docs document ID
+                shareable_url:
+                  type: string
+                  description: Shareable Google Docs URL
+                generated_document_id:
+                  type: integer
+                  description: Database record ID
+      401:
+        description: Google authentication required
+      404:
+        description: Resume or template not found
+      500:
+        description: Export failed
+    """
+    data = request.get_json()
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    # Validate input
+    if not data or 'resume_id' not in data or 'template_id' not in data:
+        return jsonify({"error": "resume_id and template_id are required"}), 400
+    
+    # Check if user has Google auth
+    google_auth = GoogleAuth.query.filter_by(user_id=current_user.id).first()
+    if not google_auth:
+        return jsonify({"error": "google_auth_required"}), 401
+    
+    # Verify Google auth has required scopes
+    required_scopes = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive']
+    if not google_auth.scope or not all(scope in google_auth.scope for scope in required_scopes):
+        return jsonify({"error": "insufficient_google_scopes"}), 403
+    
+    try:
+        # Get resume and template
+        resume = Resume.query.filter_by(
+            serial_number=data['resume_id'],
+            user_id=current_user.id
+        ).first()
+        
+        if not resume:
+            return jsonify({"error": "resume_not_found"}), 404
+        
+        template = ResumeTemplate.query.get(data['template_id'])
+        if not template:
+            return jsonify({"error": "template_not_found"}), 404
+        
+        # Get Google credentials
+        google_auth_service = GoogleAuthService()
+        credentials = google_auth_service.get_credentials(current_user.id)
+        
+        # Create Google Docs document
+        docs_service = GoogleDocsService()
+        document_data = {
+            'title': data.get('document_title', f"Resume - {resume.file_name}"),
+            'content': resume.parsed_resume
+        }
+        
+        doc_result = docs_service.create_document(document_data, credentials)
+        
+        # Apply template styling
+        if template:
+            docs_service.apply_template_styling(
+                doc_result['document_id'], 
+                template, 
+                credentials
+            )
+        
+        # Create shareable link
+        drive_service = GoogleDriveService()
+        share_result = drive_service.create_shareable_link(
+            doc_result['document_id'], 
+            credentials
+        )
+        
+        # Track in database
+        generated_doc = GeneratedDocument(
+            user_id=current_user.id,
+            resume_id=data['resume_id'],
+            template_id=data['template_id'],
+            google_doc_id=doc_result['document_id'],
+            google_doc_url=share_result['shareable_url'],
+            document_title=document_data['title'],
+            generation_status='created',
+            created_at=datetime.datetime.utcnow(),
+            updated_at=datetime.datetime.utcnow()
+        )
+        
+        db.session.add(generated_doc)
+        db.session.commit()
+        
+        return jsonify({
+            "status": 200,
+            "data": {
+                "document_id": doc_result['document_id'],
+                "shareable_url": share_result['shareable_url'],
+                "generated_document_id": generated_doc.id
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to export to Google Docs",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/resume/export/pdf/<document_id>', methods=['GET'])
+@token_required
+def export_google_docs_as_pdf(document_id):
+    """
+    Export Google Docs document as PDF
+    """
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    try:
+        # Check if user has access to this document
+        generated_doc = GeneratedDocument.query.filter_by(
+            google_doc_id=document_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not generated_doc:
+            return jsonify({"error": "document_not_found"}), 404
+        
+        # Get Google credentials
+        google_auth_service = GoogleAuthService()
+        credentials = google_auth_service.get_credentials(current_user.id)
+        
+        # Export as PDF
+        drive_service = GoogleDriveService()
+        pdf_result = drive_service.export_as_pdf(document_id, credentials)
+        
+        # Clean up temporary file if exists
+        if pdf_result.get('temp_file_path'):
+            try:
+                os.remove(pdf_result['temp_file_path'])
+            except:
+                pass
+        
+        return send_file(
+            io.BytesIO(pdf_result['pdf_content']),
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=pdf_result['filename']
+        )
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to export PDF",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/resume/export/docx/<document_id>', methods=['GET'])
+@token_required
+def export_google_docs_as_docx(document_id):
+    """
+    Export Google Docs document as DOCX
+    """
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    try:
+        # Check if user has access to this document
+        generated_doc = GeneratedDocument.query.filter_by(
+            google_doc_id=document_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not generated_doc:
+            return jsonify({"error": "document_not_found"}), 404
+        
+        # Get Google credentials
+        google_auth_service = GoogleAuthService()
+        credentials = google_auth_service.get_credentials(current_user.id)
+        
+        # Export as DOCX
+        drive_service = GoogleDriveService()
+        docx_result = drive_service.export_as_docx(document_id, credentials)
+        
+        return send_file(
+            io.BytesIO(docx_result['docx_content']),
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            as_attachment=True,
+            download_name=docx_result['filename']
+        )
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to export DOCX",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/documents', methods=['GET'])
+@token_required
+def list_user_generated_documents():
+    """
+    List user's generated documents
+    """
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    try:
+        documents = GeneratedDocument.query.filter_by(
+            user_id=current_user.id
+        ).order_by(GeneratedDocument.created_at.desc()).all()
+        
+        result = []
+        for doc in documents:
+            result.append({
+                "id": doc.id,
+                "document_title": doc.document_title,
+                "google_doc_id": doc.google_doc_id,
+                "google_doc_url": doc.google_doc_url,
+                "resume_id": doc.resume_id,
+                "template_id": doc.template_id,
+                "generation_status": doc.generation_status,
+                "created_at": doc.created_at.isoformat(),
+                "updated_at": doc.updated_at.isoformat()
+            })
+        
+        return jsonify({
+            "status": 200,
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to list documents",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/documents/<int:document_id>', methods=['DELETE'])
+@token_required
+def delete_generated_document(document_id):
+    """
+    Delete a generated document
+    """
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    try:
+        # Find the document
+        doc = GeneratedDocument.query.filter_by(
+            id=document_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not doc:
+            return jsonify({"error": "document_not_found"}), 404
+        
+        # Delete from Google Drive
+        try:
+            google_auth_service = GoogleAuthService()
+            credentials = google_auth_service.get_credentials(current_user.id)
+            
+            drive_service = GoogleDriveService()
+            drive_service.delete_document(doc.google_doc_id, credentials)
+        except:
+            # Continue even if Google deletion fails
+            pass
+        
+        # Delete from database
+        db.session.delete(doc)
+        db.session.commit()
+        
+        return jsonify({
+            "status": 200,
+            "message": "Document deleted successfully"
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to delete document",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/documents/<int:document_id>/sharing', methods=['PUT'])
+@token_required
+def update_document_sharing(document_id):
+    """
+    Update document sharing permissions
+    """
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    data = request.get_json()
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    try:
+        # Find the document
+        doc = GeneratedDocument.query.filter_by(
+            id=document_id,
+            user_id=current_user.id
+        ).first()
+        
+        if not doc:
+            return jsonify({"error": "document_not_found"}), 404
+        
+        # Update Google Drive permissions
+        google_auth_service = GoogleAuthService()
+        credentials = google_auth_service.get_credentials(current_user.id)
+        
+        drive_service = GoogleDriveService()
+        success = drive_service.update_permissions(
+            doc.google_doc_id, 
+            data, 
+            credentials
+        )
+        
+        return jsonify({
+            "status": 200,
+            "permissions_updated": success
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to update sharing",
             "details": str(e)
         }), 500
 

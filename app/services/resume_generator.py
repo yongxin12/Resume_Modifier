@@ -212,44 +212,116 @@ class ResumeGenerator:
         # Professional template emphasizes clean structure and formal presentation
         if isinstance(content, dict):
             formatted = content.copy()
-            # Ensure professional section ordering
-            formatted['sections'] = ['summary', 'experience', 'education', 'skills', 'certifications']
+            # Ensure professional section ordering as ordered dict
+            from collections import OrderedDict
+            formatted['sections'] = OrderedDict([
+                ('header', {}),
+                ('summary', {}),
+                ('experience', {}),
+                ('education', {}),
+                ('skills', {})
+            ])
             formatted['style'] = 'professional'
             return formatted
         else:
             # Fallback for string content
-            return {'content': content, 'style': 'professional', 'sections': ['summary', 'experience', 'education', 'skills']}
+            from collections import OrderedDict
+            return {
+                'content': content, 
+                'style': 'professional', 
+                'sections': OrderedDict([
+                    ('header', {}),
+                    ('summary', {}),
+                    ('experience', {}),
+                    ('education', {}),
+                    ('skills', {})
+                ])
+            }
     
     def _apply_creative_formatting(self, content: Dict[str, Any], user_data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply creative template formatting"""
         if isinstance(content, dict):
             formatted = content.copy()
-            formatted['sections'] = ['summary', 'skills', 'experience', 'education', 'projects']
+            from collections import OrderedDict
+            formatted['sections'] = OrderedDict([
+                ('header', {}),
+                ('summary', {}),
+                ('skills', {}),
+                ('experience', {}),
+                ('education', {})
+            ])
             formatted['style'] = 'creative'
             return formatted
         else:
-            return {'content': content, 'style': 'creative', 'sections': ['summary', 'skills', 'experience', 'education']}
+            from collections import OrderedDict
+            return {
+                'content': content, 
+                'style': 'creative', 
+                'sections': OrderedDict([
+                    ('header', {}),
+                    ('summary', {}),
+                    ('skills', {}),
+                    ('experience', {}),
+                    ('education', {})
+                ])
+            }
     
     def _apply_technical_formatting(self, content: Dict[str, Any], user_data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply technical template formatting"""
         if isinstance(content, dict):
             formatted = content.copy()
-            formatted['sections'] = ['summary', 'skills', 'experience', 'certifications', 'education']
+            from collections import OrderedDict
+            formatted['sections'] = OrderedDict([
+                ('header', {}),
+                ('summary', {}),
+                ('skills', {}),
+                ('experience', {}),
+                ('certifications', {})
+            ])
             formatted['style'] = 'technical'
             return formatted
         else:
-            return {'content': content, 'style': 'technical', 'sections': ['summary', 'skills', 'experience', 'certifications']}
+            from collections import OrderedDict
+            return {
+                'content': content, 
+                'style': 'technical', 
+                'sections': OrderedDict([
+                    ('header', {}),
+                    ('summary', {}),
+                    ('skills', {}),
+                    ('experience', {}),
+                    ('certifications', {})
+                ])
+            }
     
     def _apply_default_formatting(self, content: Dict[str, Any], user_data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply default template formatting"""
         if isinstance(content, dict):
             formatted = content.copy()
             if 'sections' not in formatted:
-                formatted['sections'] = ['summary', 'experience', 'education', 'skills']
+                from collections import OrderedDict
+                formatted['sections'] = OrderedDict([
+                    ('header', {}),
+                    ('summary', {}),
+                    ('experience', {}),
+                    ('education', {}),
+                    ('skills', {})
+                ])
             formatted['style'] = 'default'
             return formatted
         else:
-            return {'content': content, 'style': 'default', 'sections': ['summary', 'experience', 'education', 'skills']}
+            from collections import OrderedDict
+            return {
+                'content': content, 
+                'style': 'default', 
+                'sections': OrderedDict([
+                    ('header', {}),
+                    ('summary', {}),
+                    ('experience', {}),
+                    ('education', {}),
+                    ('skills', {})
+                ])
+            }
     
     def personalize_content(self, content: str, user_profile: Dict[str, Any], job_description: str = None) -> Dict[str, Any]:
         """
