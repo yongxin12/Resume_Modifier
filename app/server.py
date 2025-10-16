@@ -15,6 +15,7 @@ from app.models.temp import User, Resume, JobDescription, GoogleAuth, ResumeTemp
 from app.utils.feedback_validator import FeedbackValidator
 from app.utils.jwt_utils import generate_token, token_required
 from app.utils.profile_validator import ProfileValidator
+from googleapiclient.errors import HttpError
 import datetime
 import io
 import os
@@ -301,7 +302,10 @@ def seed_templates():
         return jsonify({
             "error": "Failed to seed templates",
             "details": str(e)
-        }), 500@api.route('/api/job_description_upload', methods=['POST'])
+        }), 500
+
+
+@api.route('/api/job_description_upload', methods=['POST'])
 def analyze_with_job():
     """
     Analyze resume against job description
@@ -765,13 +769,13 @@ def save_resume():
             # Update existing resume
             existing_resume.parsed_resume = resume_data
             # existing_resume.template = template
-            existing_resume.template = 1
+            existing_resume.template_id = 1
             db.session.commit()
         else:
             # Create new resume entry
             # Get the next serial number for this user
             existing_count = Resume.query.filter_by(user_id=user_id).count()
-            now = datetime.datetime.now(datetime.UTC)  # Using timezone-aware datetime
+            now = datetime.datetime.utcnow()  # Using standard utcnow() method
             
             resume = Resume(
                 user_id=user_id,
@@ -779,7 +783,7 @@ def save_resume():
                 title=resume_title,
                 parsed_resume=resume_data,
                 # template=template,
-                template=1,
+                template_id=1,
                 updated_at=now,
                 created_at=now
             )
@@ -1186,7 +1190,38 @@ def export_resume_to_google_docs():
             }
         }), 200
         
+    except HttpError as e:
+        # Handle specific Google API errors
+        if e.resp.status == 429:
+            return jsonify({
+                "error": "quota_exceeded",
+                "message": "Google API quota exceeded"
+            }), 429
+        elif e.resp.status == 401:
+            return jsonify({
+                "error": "authentication_error", 
+                "message": "Invalid Google credentials"
+            }), 401
+        elif e.resp.status == 403:
+            return jsonify({
+                "error": "permission_denied",
+                "message": "Insufficient permissions"
+            }), 403
+        else:
+            return jsonify({
+                "error": "google_api_error",
+                "message": f"Google API error: {e.resp.status}"
+            }), e.resp.status
     except Exception as e:
+        # Handle network errors
+        import requests
+        if isinstance(e, requests.exceptions.ConnectionError) or 'ConnectionError' in str(type(e)):
+            return jsonify({
+                "error": "network_error",
+                "message": "Network connection failed"
+            }), 503
+        
+        # Generic error fallback
         return jsonify({
             "error": "Failed to export to Google Docs",
             "details": str(e)

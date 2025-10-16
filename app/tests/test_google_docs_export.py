@@ -441,7 +441,7 @@ class TestDocumentManagement:
             'public_access': False
         }
         
-        with patch('app.services.google_drive_service.GoogleDriveService') as mock_drive_service:
+        with patch('app.server.GoogleDriveService') as mock_drive_service:
             mock_drive_service.return_value.update_permissions.return_value = True
             
             response = client.put(f'/api/documents/{doc.id}/sharing',

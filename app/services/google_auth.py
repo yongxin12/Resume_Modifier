@@ -23,8 +23,10 @@ class GoogleAuthService:
         """Initialize Google OAuth configuration"""
         self.client_id = os.getenv('GOOGLE_CLIENT_ID', 'test_client_id')
         self.client_secret = os.getenv('GOOGLE_CLIENT_SECRET', 'test_client_secret')
+        self.redirect_uri = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5000/auth/google/callback')
         self.scopes = [
             'https://www.googleapis.com/auth/documents',
+            'https://www.googleapis.com/auth/drive',
             'https://www.googleapis.com/auth/drive.file',
             'openid',
             'email',

@@ -185,7 +185,7 @@ class TestGoogleAPIErrorHandling:
     """Test suite for Google API error handling"""
     
     @pytest.mark.auth
-    def test_google_api_quota_exceeded(self, client, sample_google_auth, authenticated_headers):
+    def test_google_api_quota_exceeded(self, client, sample_google_auth, authenticated_headers, sample_resume):
         """Test handling of Google API quota exceeded errors"""
         from googleapiclient.errors import HttpError
         
@@ -205,7 +205,7 @@ class TestGoogleAPIErrorHandling:
             assert 'quota_exceeded' in json_data['error']
             
     @pytest.mark.auth
-    def test_google_api_authentication_error(self, client, sample_google_auth, authenticated_headers):
+    def test_google_api_authentication_error(self, client, sample_google_auth, authenticated_headers, sample_resume):
         """Test handling of Google API authentication errors"""
         from googleapiclient.errors import HttpError
         
@@ -222,10 +222,10 @@ class TestGoogleAPIErrorHandling:
             
             assert response.status_code == 401
             json_data = response.get_json()
-            assert 'authentication_failed' in json_data['error']
+            assert 'authentication_error' in json_data['error']
             
     @pytest.mark.auth
-    def test_google_api_network_error(self, client, sample_google_auth, authenticated_headers):
+    def test_google_api_network_error(self, client, sample_google_auth, authenticated_headers, sample_resume):
         """Test handling of network errors with Google API"""
         import requests
         

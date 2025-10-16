@@ -82,8 +82,9 @@ def test_register_and_login():
     print("\n=== Testing Registration and Login ===")
     
     # Test registration
+    import time
     register_data = {
-        "email": f"testuser_{int(requests.utils.now().timestamp())}@example.com",
+        "email": f"testuser_{int(time.time())}@example.com",
         "password": "SecurePass123!"
     }
     
