@@ -139,7 +139,7 @@ class TestGoogleCloudConfiguration:
         service = GoogleAuthService()
         assert service.client_id == 'test_client_id'
         assert service.client_secret == 'test_client_secret'
-        assert service.redirect_uri == 'http://localhost:5000/auth/google/callback'
+        assert service.redirect_uri == 'http://localhost:5001/auth/google/callback'
         
     @pytest.mark.unit
     def test_google_api_scopes_configuration(self):

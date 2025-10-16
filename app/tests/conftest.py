@@ -331,7 +331,7 @@ def mock_env_vars(monkeypatch):
     """Mock environment variables for testing"""
     monkeypatch.setenv('GOOGLE_CLIENT_ID', 'test_client_id')
     monkeypatch.setenv('GOOGLE_CLIENT_SECRET', 'test_client_secret')
-    monkeypatch.setenv('GOOGLE_REDIRECT_URI', 'http://localhost:5000/auth/google/callback')
+    monkeypatch.setenv('GOOGLE_REDIRECT_URI', 'http://localhost:5001/auth/google/callback')
     monkeypatch.setenv('OPENAI_API_KEY', 'test_openai_key')
 
 
