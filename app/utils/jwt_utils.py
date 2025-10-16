@@ -44,7 +44,7 @@ def token_required(f):
                 return jsonify({"error": "Invalid token format"}), 401
         
         if not token:
-            return jsonify({"error": "Token is missing"}), 401
+            return jsonify({"error": "Token is missing - authentication_required"}), 401
             
         try:
             # Verify token and get user data

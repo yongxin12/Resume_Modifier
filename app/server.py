@@ -4,6 +4,7 @@ from app.utils.pdf_validator import PDFValidator
 from app.utils.job_validator import JobValidator
 from app.utils.parse_pdf import parse_pdf_file
 from app.services.resume_ai import ResumeAI
+from app.services.resume_generator import ResumeGenerator
 from app.services.template_service import TemplateService
 from app.services.google_auth import GoogleAuthService
 from app.services.google_docs_service import GoogleDocsService
@@ -1139,7 +1140,7 @@ def export_resume_to_google_docs():
         # Create Google Docs document
         docs_service = GoogleDocsService()
         document_data = {
-            'title': data.get('document_title', f"Resume - {resume.file_name}"),
+            'title': data.get('document_title', f"Resume - {resume.title}"),
             'content': resume.parsed_resume
         }
         
@@ -1188,6 +1189,67 @@ def export_resume_to_google_docs():
     except Exception as e:
         return jsonify({
             "error": "Failed to export to Google Docs",
+            "details": str(e)
+        }), 500
+
+
+@api.route('/api/resume/generate', methods=['POST'])
+@token_required
+def generate_resume():
+    """
+    Generate optimized resume content using AI based on user data and job description
+    """
+    data = request.get_json()
+    user_id = request.user.get('user_id')
+    current_user = User.query.get(user_id)
+    
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    # Validate required fields
+    if not data or not all(key in data for key in ['user_data', 'job_description', 'template_id']):
+        return jsonify({
+            "error": "Missing required_fields: user_data, job_description, template_id"
+        }), 400
+    
+    try:
+        # Initialize resume generator
+        generator = ResumeGenerator()
+        
+        # Generate optimized content
+        result = generator.generate_content(
+            user_data=data['user_data'],
+            job_description=data['job_description'],
+            template_id=data['template_id']
+        )
+        
+        return jsonify({
+            "status": 200,
+            "data": {
+                "generated_resume": result.get('optimized_content', ''),
+                "optimizations_applied": result.get('improvements', []),
+                "ats_score": result.get('ats_score', 0),
+                "keywords_matched": result.get('keywords_matched', []),
+                "template_applied": result.get('template_applied', '')
+            }
+        }), 200
+        
+    except ValueError as e:
+        # Check if it's a template not found error
+        if "Template" in str(e) and "not found" in str(e):
+            return jsonify({
+                "error": "template_not_found",
+                "details": str(e)
+            }), 404
+        
+        return jsonify({
+            "error": "Invalid request data",
+            "details": str(e)
+        }), 400
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Failed to generate resume",
             "details": str(e)
         }), 500
 

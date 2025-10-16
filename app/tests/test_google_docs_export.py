@@ -121,29 +121,39 @@ class TestGoogleDocsExportAPI:
             'document_title': 'My Professional Resume'
         }
         
-        with patch('app.services.google_docs_service.GoogleDocsService') as mock_docs_service:
-            with patch('app.services.google_drive_service.GoogleDriveService') as mock_drive_service:
-                # Mock successful document creation
-                mock_docs_service.return_value.create_document.return_value = {
-                    'document_id': 'test_doc_id_123',
-                    'document_url': 'https://docs.google.com/document/d/test_doc_id_123/edit'
-                }
+        with patch('app.server.GoogleDocsService') as mock_docs_service:
+            with patch('app.server.GoogleDriveService') as mock_drive_service:
+                with patch('app.server.GoogleAuthService') as mock_auth_service:
+                    # Mock successful document creation
+                    mock_docs_service.return_value.create_document.return_value = {
+                        'document_id': 'test_doc_id_123',
+                        'document_url': 'https://docs.google.com/document/d/test_doc_id_123/edit'
+                    }
+                    
+                    mock_docs_service.return_value.apply_template_styling.return_value = {
+                        'styling_applied': True
+                    }
+                    
+                    mock_drive_service.return_value.create_shareable_link.return_value = {
+                        'shareable_url': 'https://docs.google.com/document/d/test_doc_id_123/edit',
+                        'permission_id': 'permission_123'
+                    }
+                    
+                    # Mock credentials
+                    from unittest.mock import Mock
+                    mock_credentials = Mock()
+                    mock_auth_service.return_value.get_credentials.return_value = mock_credentials
                 
-                mock_drive_service.return_value.create_shareable_link.return_value = {
-                    'shareable_url': 'https://docs.google.com/document/d/test_doc_id_123/edit',
-                    'permission_id': 'permission_123'
-                }
-                
-                response = client.post('/api/resume/export/gdocs',
-                                     json=request_data,
-                                     headers=authenticated_headers)
-                
-                assert response.status_code == 200
-                json_data = response.get_json()
-                assert json_data['status'] == 200
-                assert 'data' in json_data
-                assert 'document_id' in json_data['data']
-                assert 'shareable_url' in json_data['data']
+                    response = client.post('/api/resume/export/gdocs',
+                                         json=request_data,
+                                         headers=authenticated_headers)
+                    
+                    assert response.status_code == 200
+                    json_data = response.get_json()
+                    assert json_data['status'] == 200
+                    assert 'data' in json_data
+                    assert 'document_id' in json_data['data']
+                    assert 'shareable_url' in json_data['data']
                 
     @pytest.mark.api
     def test_export_requires_google_auth(self, client, authenticated_headers, sample_resume, sample_template):
@@ -187,23 +197,29 @@ class TestGoogleDocsExportAPI:
             'document_title': 'Tracked Resume'
         }
         
-        with patch('app.services.google_docs_service.GoogleDocsService') as mock_docs_service:
-            with patch('app.services.google_drive_service.GoogleDriveService') as mock_drive_service:
-                mock_docs_service.return_value.create_document.return_value = {
-                    'document_id': 'tracked_doc_id',
-                    'document_url': 'https://docs.google.com/document/d/tracked_doc_id/edit'
-                }
-                
-                mock_drive_service.return_value.create_shareable_link.return_value = {
-                    'shareable_url': 'https://docs.google.com/document/d/tracked_doc_id/edit',
-                    'permission_id': 'permission_123'
-                }
-                
-                response = client.post('/api/resume/export/gdocs',
-                                     json=request_data,
-                                     headers=authenticated_headers)
-                
-                assert response.status_code == 200
+        with patch('app.server.GoogleAuthService') as mock_auth_service:
+            with patch('app.server.GoogleDocsService') as mock_docs_service:
+                with patch('app.server.GoogleDriveService') as mock_drive_service:
+                    # Mock the auth service
+                    mock_auth_service.return_value.get_credentials.return_value = MagicMock()
+                    
+                    # Mock the docs service
+                    mock_docs_service.return_value.create_document.return_value = {
+                        'document_id': 'tracked_doc_id',
+                        'document_url': 'https://docs.google.com/document/d/tracked_doc_id/edit'
+                    }
+                    
+                    # Mock the drive service
+                    mock_drive_service.return_value.create_shareable_link.return_value = {
+                        'shareable_url': 'https://docs.google.com/document/d/tracked_doc_id/edit',
+                        'permission_id': 'permission_123'
+                    }
+                    
+                    response = client.post('/api/resume/export/gdocs',
+                                         json=request_data,
+                                         headers=authenticated_headers)
+                    
+                    assert response.status_code == 200
                 
                 # Verify document is tracked in database
                 generated_doc = GeneratedDocument.query.filter_by(
