@@ -16,8 +16,9 @@ os.environ.setdefault('PYTHONPATH', current_dir)
 
 if __name__ == "__main__":
     try:
-        # Import and run the Flask application
-        from app.server import app
+        # Import and create the Flask application
+        from app import create_app
+        app = create_app()
         
         # Get port from environment (Railway sets this automatically)
         port = int(os.environ.get('PORT', 5001))
@@ -26,6 +27,7 @@ if __name__ == "__main__":
         print(f"🚀 Starting Resume Modifier on {host}:{port}")
         print(f"📍 Python Path: {sys.path[0]}")
         print(f"🔧 Working Directory: {os.getcwd()}")
+        print(f"📦 Flask App: {app}")
         
         # Start the application
         app.run(
