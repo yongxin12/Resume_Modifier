@@ -256,62 +256,6 @@ class GoogleDocsService:
         Returns:
             List of formatting requests
         """
-        requests = []
-        
-        # Get template style or use default professional styling
-        template_style = getattr(template, 'style', 'professional') if template else 'professional'
-        
-        # Header styling (name)
-        requests.append({
-            'updateTextStyle': {
-                'range': {
-                    'startIndex': 1,
-                    'endIndex': 50  # Approximate header length
-                },
-                'textStyle': {
-                    'fontSize': {'magnitude': 18, 'unit': 'PT'},
-                    'bold': True,
-                    'foregroundColor': {
-                        'color': {'rgbColor': {'red': 0.2, 'green': 0.2, 'blue': 0.2}}
-                    }
-                },
-                'fields': 'fontSize,bold,foregroundColor'
-            }
-        })
-        
-        # Section headers styling
-        requests.append({
-            'updateTextStyle': {
-                'range': {
-                    'startIndex': 100,
-                    'endIndex': 150  # Section headers
-                },
-                'textStyle': {
-                    'fontSize': {'magnitude': 12, 'unit': 'PT'},
-                    'bold': True,
-                    'foregroundColor': {
-                        'color': {'rgbColor': {'red': 0.1, 'green': 0.1, 'blue': 0.1}}
-                    }
-                },
-                'fields': 'fontSize,bold,foregroundColor'
-            }
-        })
-        
-        # Body text styling
-        requests.append({
-            'updateTextStyle': {
-                'range': {
-                    'startIndex': 150,
-                    'endIndex': 1000  # Body content
-                },
-                'textStyle': {
-                    'fontSize': {'magnitude': 11, 'unit': 'PT'},
-                    'foregroundColor': {
-                        'color': {'rgbColor': {'red': 0.3, 'green': 0.3, 'blue': 0.3}}
-                    }
-                },
-                'fields': 'fontSize,foregroundColor'
-            }
-        })
-        
-        return requests
+        # For now, return empty list to avoid index errors
+        # TODO: Implement dynamic text range calculation based on actual document content
+        return []
