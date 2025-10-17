@@ -597,6 +597,9 @@ def login():
             user:
               type: object
               properties:
+                id:
+                  type: integer
+                  example: 1
                 email:
                   type: string
             token:
@@ -623,7 +626,10 @@ def login():
     
     return jsonify({
         "status": "success",
-        "user": {"email": user.email},
+        "user": {
+            "id": user.id,
+            "email": user.email
+        },
         "token": token
     }), 200
 

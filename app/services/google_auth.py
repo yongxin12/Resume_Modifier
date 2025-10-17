@@ -29,8 +29,8 @@ class GoogleAuthService:
             'https://www.googleapis.com/auth/drive',
             'https://www.googleapis.com/auth/drive.file',
             'openid',
-            'email',
-            'profile'
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile'
         ]
         
     def get_authorization_url(self, user_id: int) -> str:

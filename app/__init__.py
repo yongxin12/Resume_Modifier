@@ -14,11 +14,16 @@ def create_app(config=None):
     
     # Load environment variables first (but only if not testing)
     if not config or not config.get('TESTING'):
+        print("Loading environment variables from .env")
         load_dotenv()
         app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql+pymysql://mysql:Mintmelon666!@localhost:3306/resume_app')
+        # Set Flask secret key for sessions
+        app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
     else:
+        print("Loading test configuration")
         # For testing, use SQLite by default
         app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+        app.config['SECRET_KEY'] = 'test-secret-key'
         
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
