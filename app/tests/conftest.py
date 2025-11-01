@@ -7,7 +7,7 @@ import os
 from unittest.mock import Mock, patch, MagicMock
 from app import create_app
 from app.extensions import db
-from app.models.temp import User, Resume, ResumeTemplate, GoogleAuth, GeneratedDocument
+from app.models.temp import User, Resume, ResumeTemplate, GoogleAuth, GeneratedDocument, ResumeFile
 from sqlalchemy import text
 from datetime import datetime, timedelta
 import json
@@ -49,6 +49,7 @@ def clean_db(app_context):
     """Clean database before and after each test"""
     # Clean before test
     try:
+        db.session.execute(text('DELETE FROM resume_files'))
         db.session.execute(text('DELETE FROM generated_documents'))
         db.session.execute(text('DELETE FROM google_auth_tokens'))
         db.session.execute(text('DELETE FROM resumes'))
@@ -62,6 +63,7 @@ def clean_db(app_context):
     
     # Clean after test
     try:
+        db.session.execute(text('DELETE FROM resume_files'))
         db.session.execute(text('DELETE FROM generated_documents'))
         db.session.execute(text('DELETE FROM google_auth_tokens'))
         db.session.execute(text('DELETE FROM resumes'))

@@ -54,9 +54,9 @@ def create_app(config=None):
     # This ensures they are registered with Flask-SQLAlchemy
     with app.app_context():
         # Import models and explicitly register them with Flask-SQLAlchemy
-        from app.models.temp import User, Resume, JobDescription
+        from app.models.temp import User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite
         # Make sure the models are registered with db.metadata
-        for model in [User, Resume, JobDescription]:
+        for model in [User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite]:
             if hasattr(model, '__table__'):
                 if model.__table__.name not in db.metadata.tables:
                     db.metadata.tables[model.__table__.name] = model.__table__
