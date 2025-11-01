@@ -1,0 +1,136 @@
+================================================================================
+MODEL FILES STATUS - Visual Overview
+================================================================================
+
+Current Situation in app/models/:
+==================================
+
+app/models/
+├── __init__.py                    [Empty - just makes it a package]
+│
+├── temp.py                        ✅ ACTIVE - USED BY APPLICATION
+│   ├── User                       ✅ Imported by server.py
+│   ├── Resume                     ✅ Imported by server.py
+│   ├── JobDescription             ✅ Imported by server.py
+│   ├── UserSite                   ✅ Imported by server.py
+│   ├── ResumeTemplate             ✅ Imported by server.py
+│   ├── GoogleAuth                 ✅ Imported by server.py
+│   └── GeneratedDocument          ✅ Imported by server.py
+│
+├── user.py                        ❌ INACTIVE - NOT USED
+│   └── User (different schema!)   ❌ Only imported by init_db.py
+│
+├── resume.py                      ❌ INACTIVE - NOT USED
+│   └── Resume (different schema!) ❌ Only imported by init_db.py
+│
+├── job_description.py             ❌ INACTIVE - NOT USED
+│   └── JobDescription (diff!)     ❌ Only imported by init_db.py
+│
+├── resume_analysis.py             ❌ INACTIVE - NOT USED
+│   └── ResumeAnalysis             ❌ NOT imported anywhere!
+│
+└── db.py                          ❌ INACTIVE - NOT USED
+    ├── User (SQLAlchemy Base)     ❌ Different ORM approach
+    ├── Resume (SQLAlchemy Base)   ❌ NOT imported anywhere!
+    └── JobDescription (Base)      ❌ NOT imported anywhere!
+
+
+Import Flow (What Actually Runs):
+==================================
+
+app/server.py
+    ↓
+    from app.models.temp import User, Resume, JobDescription, ...
+    ↓
+    Uses these models ✅
+    ↓
+Database Tables Match ✅
+
+
+What Gets Ignored:
+==================
+
+app/init_db.py (Old initialization script)
+    ↓
+    from app.models.user import User
+    from app.models.resume import Resume
+    from app.models.job_description import JobDescription
+    ↓
+    db.create_all() ← NOT USED IN PRODUCTION
+    ↓
+These imports have NO EFFECT on running application ❌
+
+
+Database Tables → Models Mapping:
+==================================
+
+Database Table          Model Location              Status
+─────────────────────  ──────────────────────────  ───────
+users                  app/models/temp.py → User   ✅ Match
+resumes                app/models/temp.py → Resume ✅ Match  
+job_descriptions       app/models/temp.py → ...    ✅ Match
+user_sites             app/models/temp.py → ...    ✅ Match
+resume_templates       app/models/temp.py → ...    ✅ Match
+google_auth_tokens     app/models/temp.py → ...    ✅ Match
+generated_documents    app/models/temp.py → ...    ✅ Match
+
+
+Schema Conflicts:
+=================
+
+temp.py (ACTIVE)          vs          user.py (INACTIVE)
+─────────────────────────────────────────────────────────
+User.username ✅                       [MISSING] ❌
+User.password ✅                       password_hash ❌
+User.updated_at ✅                     [MISSING] ❌
+
+
+temp.py (ACTIVE)          vs          resume.py (INACTIVE)
+─────────────────────────────────────────────────────────
+Resume PK: (user_id,      vs          Resume PK: id ❌
+           serial_number) ✅
+Resume.template_id ✅                  [MISSING] ❌
+
+
+Recommendations:
+================
+
+Option 1: DELETE unused files (Recommended)
+├── rm app/models/user.py
+├── rm app/models/resume.py
+├── rm app/models/job_description.py
+├── rm app/models/resume_analysis.py
+├── rm app/models/db.py
+└── Rename temp.py → models.py (optional)
+
+Option 2: ARCHIVE unused files (Safe)
+├── mkdir app/models/_archived/
+├── mv {unused files} app/models/_archived/
+└── Add README explaining they're archived
+
+Option 3: REORGANIZE (Best long-term)
+├── Split temp.py into individual files
+├── Update all to match temp.py schemas
+├── Use app/models/__init__.py for imports
+└── Remove duplicates
+
+
+Action Items:
+=============
+
+1. ✅ Understand: temp.py is the ONLY active model file
+2. ✅ All tables DO have models (in temp.py)
+3. ⚠️  Clean up: Remove or archive unused model files
+4. ✅ Test: After cleanup, verify everything still works
+5. ✅ Document: Update team about model file location
+
+
+Current Status:
+===============
+
+✅ Application is working correctly
+✅ All database tables have corresponding models
+✅ Migrations are now properly documented
+⚠️  Multiple conflicting model files exist (cleanup needed)
+⚠️  Risk of confusion for developers
+
