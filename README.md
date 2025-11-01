@@ -46,6 +46,23 @@ Resume Modifier is a comprehensive web service that leverages artificial intelli
 | [🚄 RAILWAY_DEPLOYMENT.md](./RAILWAY_DEPLOYMENT.md) | Railway-specific deployment guide | Cloud deployment |
 | [📊 TASK_TRACKING.md](./TASK_TRACKING.md) | Development progress & achievements | Project status |
 
+### 🗄️ Database Management Documentation
+| Document | Description | Use Case |
+|----------|-------------|----------|
+| [🎉 MIGRATION_ALIGNMENT_COMPLETE.md](./MIGRATION_ALIGNMENT_COMPLETE.md) | Migration sync completion report | Understanding what was fixed |
+| [📊 DATABASE_REVIEW_SUMMARY.md](./DATABASE_REVIEW_SUMMARY.md) | Current database state & issues | Understanding current setup |
+| [🔍 DATABASE_ANALYSIS.md](./DATABASE_ANALYSIS.md) | Detailed technical database analysis | Deep dive into schema |
+| [📚 docs/DATABASE_BEST_PRACTICES.md](./docs/DATABASE_BEST_PRACTICES.md) | Complete migration & management guide | Development & production workflows |
+| [🚀 docs/DEPLOYMENT_WORKFLOW.md](./docs/DEPLOYMENT_WORKFLOW.md) | Step-by-step deployment cheat sheet | Deploying database changes |
+| [📘 docs/DATABASE_QUICKSTART.md](./docs/DATABASE_QUICKSTART.md) | Quick start guide | Getting started fast |
+
+### 🛠️ Database Scripts & Tools
+| Script | Description | Use Case |
+|--------|-------------|----------|
+| [🔧 verify_database_schema.py](./verify_database_schema.py) | Schema verification script | Checking database integrity |
+| [✅ validate_migrations.py](./validate_migrations.py) | Migration validation script | Verify migrations before deploy |
+| [⚡ fix_database_primary_keys.sh](./fix_database_primary_keys.sh) | Fix missing primary keys | Resolving PK issues (already applied) |
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -217,53 +234,98 @@ curl -X GET http://localhost:5001/apidocs
 
 ## 🚄 Railway Deployment
 
-### Quick Deploy to Railway
+### 🚀 Quick Deploy (5 minutes)
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template)
+
+**New to Railway?** Follow our step-by-step guides:
+
+| Guide | Time | Purpose |
+|-------|------|---------|
+| 📖 [**Railway Docs Index**](./RAILWAY_DOCS_INDEX.md) | 2 min | Start here - Choose your guide |
+| ⚡ [**Quick Deploy**](./RAILWAY_QUICK_DEPLOY.md) | 5 min | Fast deployment reference |
+| 📚 [**Complete Guide**](./RAILWAY_DEPLOYMENT_COMPLETE_GUIDE.md) | 60 min | Production-ready deployment |
+| 🔄 [**Migration Guide**](./RAILWAY_MIGRATION_GUIDE.md) | 15 min | Database migration help |
+
+### Essential Steps
+
 1. **Create Railway Account** at [railway.app](https://railway.app)
 
 2. **Deploy from GitHub**
    ```bash
-   # Fork this repository or push to your GitHub
-   # Connect your GitHub repo to Railway
+   # Connect your GitHub repository to Railway
+   # Railway auto-detects Python and uses railway.toml
    ```
 
-3. **Set Environment Variables in Railway Dashboard**
+3. **Add PostgreSQL Database**
+   ```bash
+   # In Railway Dashboard:
+   # Click "New" → "Database" → "PostgreSQL"
+   ```
+
+4. **Set Environment Variables**
    ```bash
    OPENAI_API_KEY=sk-proj-your-openai-key-here
    JWT_SECRET=your-super-secure-jwt-secret
-   DATABASE_URL=postgresql://user:pass@host:port/dbname  # Auto-provided by Railway
+   FLASK_SECRET_KEY=your-flask-secret
    FLASK_APP=app.server
    FLASK_ENV=production
    PORT=5001
    ```
 
-4. **Add PostgreSQL Database**
-   - Go to Railway Dashboard
-   - Click "New" → "Database" → "PostgreSQL"
-   - Railway will automatically set DATABASE_URL
+5. **Run Database Migration**
+   ```bash
+   # Option A: Automated (recommended)
+   # Update railway.toml startCommand to include migration
+   
+   # Option B: Manual
+   ./scripts/railway_migrate.py upgrade
+   ```
 
-5. **Deploy**
-   - Railway will automatically build and deploy
-   - Get your app URL from Railway dashboard
-   - Access API docs at: `https://your-app.railway.app/apidocs`
+6. **Verify Deployment**
+   ```bash
+   curl https://your-app.railway.app/health
+   # Expected: {"status": "healthy", ...}
+   ```
 
-### Railway Configuration Files
+### 🛠️ Automated Migration Scripts
 
-Railway automatically detects Python projects. The deployment uses:
-- **Build Command**: `pip install -r requirements.txt`
-- **Start Command**: `python -m app.server`
-- **Port**: 5001 (configured via PORT environment variable)
+We provide automated tools for easy database migrations:
 
-### Environment Variables for Railway
 ```bash
-# Required for Railway deployment
-OPENAI_API_KEY=sk-proj-your-actual-openai-key
-JWT_SECRET=your-production-jwt-secret-key
-DATABASE_URL=postgresql://...  # Auto-provided by Railway PostgreSQL
-FLASK_APP=app.server
-FLASK_ENV=production
-FLASK_DEBUG=0
-PORT=5001
+# Python script (recommended)
+./scripts/railway_migrate.py upgrade
+./scripts/railway_migrate.py current
+
+# Bash script (alternative)
+./scripts/railway_migrate.sh upgrade
 ```
+
+**See:** [scripts/README.md](./scripts/README.md) for detailed usage
+
+### ⚠️ Important Notes
+
+- **Database URLs**: Railway provides two URLs (internal & public)
+  - Use **internal** for deployed apps (automatic)
+  - Use **public** for local migrations
+  - See [Migration Guide](./RAILWAY_MIGRATION_GUIDE.md) for details
+
+- **Environment Variables**: Generate secure secrets:
+  ```bash
+  openssl rand -base64 32  # For JWT_SECRET
+  openssl rand -base64 32  # For FLASK_SECRET_KEY
+  ```
+
+- **Google OAuth**: Update redirect URI to match your Railway URL:
+  ```
+  https://your-app.railway.app/auth/google/callback
+  ```
+
+### 📚 Comprehensive Documentation
+
+For detailed deployment instructions, troubleshooting, security best practices, CI/CD setup, and more:
+
+**👉 [View Complete Railway Documentation](./RAILWAY_DOCS_INDEX.md)**
 
 ## 🗄️ Database Management
 
