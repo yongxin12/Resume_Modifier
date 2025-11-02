@@ -742,6 +742,373 @@ def upload_file():
             'error': str(e)
         }), 500
 
+
+@api.route('/api/files/<int:file_id>/download', methods=['GET'])
+@token_required
+def download_file(file_id):
+    """
+    Download a file by ID
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: The ID of the file to download
+      - name: inline
+        in: query
+        type: boolean
+        default: false
+        description: If true, display file inline instead of download
+    responses:
+      200:
+        description: File downloaded successfully
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      400:
+        description: Invalid file ID format
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: Invalid file ID format
+      401:
+        description: Authentication required
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: Authentication required
+      403:
+        description: Access denied
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: Access denied to this file
+      404:
+        description: File not found
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: File not found
+      500:
+        description: Server error during download
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: File download failed
+    """
+    try:
+        # Validate file ID format
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Get current user ID from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # Find the file record in database
+        resume_file = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id,
+            is_active=True
+        ).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found'
+            }), 404
+        
+        # Check if user owns the file (additional security check)
+        if resume_file.user_id != current_user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Access denied to this file'
+            }), 403
+        
+        # Initialize storage service with configuration
+        storage_config = {
+            'storage_type': os.getenv('FILE_STORAGE_TYPE', 'local'),
+            'local_storage_path': os.getenv('LOCAL_STORAGE_PATH', '/tmp/resume_files'),
+            'base_url': os.getenv('BASE_URL', 'http://localhost:5001'),
+            's3_bucket': os.getenv('S3_BUCKET', ''),
+            's3_region': os.getenv('S3_REGION', 'us-east-1'),
+            'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
+            'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', '')
+        }
+        
+        storage_service = FileStorageService(storage_config)
+        
+        # Download file from storage
+        try:
+            download_result = storage_service.download_file(
+                file_path=resume_file.file_path,
+                storage_type=resume_file.storage_type,
+                s3_bucket=resume_file.s3_bucket
+            )
+            
+            if not download_result.success:
+                return jsonify({
+                    'success': False,
+                    'message': f'File download failed: {download_result.error_message}'
+                }), 500
+                
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'Storage service error: {str(e)}'
+            }), 500
+        
+        # Check if inline parameter is set
+        inline = request.args.get('inline', 'false').lower() == 'true'
+        
+        # Log the download for audit purposes
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"File download: user_id={current_user_id}, file_id={file_id}, filename={resume_file.original_filename}")
+        
+        # Send the file
+        try:
+            return send_file(
+                download_result.file_path,
+                as_attachment=not inline,
+                download_name=resume_file.original_filename,
+                mimetype=resume_file.mime_type or 'application/octet-stream'
+            )
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'Error sending file: {str(e)}'
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Unexpected error during file download: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files/<file_id>', methods=['DELETE'])
+@token_required
+def delete_file(file_id):
+    """
+    Delete a file by ID
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: The ID of the file to delete
+      - name: force
+        in: query
+        type: boolean
+        default: false
+        description: If true, permanently delete from storage (hard delete). If false, only mark as inactive (soft delete)
+    responses:
+      200:
+        description: File deleted successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: File deleted successfully
+            file_id:
+              type: integer
+              example: 123
+            delete_type:
+              type: string
+              enum: [soft, hard]
+              example: soft
+      400:
+        description: Invalid file ID format
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: Invalid file ID format
+      401:
+        description: Authentication required
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: Authentication required
+      403:
+        description: Access denied
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: Access denied to this file
+      404:
+        description: File not found
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: File not found
+      500:
+        description: Server error during deletion
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: File deletion failed
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Validate file ID format
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Get current user ID from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # Check for force parameter
+        force_delete = request.args.get('force', 'false').lower() == 'true'
+        
+        # Find the file record in database
+        resume_file = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id,
+            is_active=True
+        ).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found'
+            }), 404
+        
+        # Check if user owns the file (additional security check)
+        if resume_file.user_id != current_user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Access denied to this file'
+            }), 403
+        
+        # Perform storage deletion if force delete and file has a path
+        if force_delete and resume_file.file_path:
+            # Initialize storage service with configuration for hard delete only
+            storage_config = {
+                'storage_type': os.getenv('FILE_STORAGE_TYPE', 'local'),
+                'local_base_path': os.getenv('LOCAL_STORAGE_PATH', 'uploads/files'),
+                's3_bucket': os.getenv('AWS_S3_BUCKET', ''),
+                's3_access_key': os.getenv('AWS_ACCESS_KEY_ID', ''),
+                's3_secret_key': os.getenv('AWS_SECRET_ACCESS_KEY', ''),
+                's3_region': os.getenv('AWS_S3_REGION', 'us-east-1')
+            }
+            
+            storage_service = FileStorageService(storage_config)
+            
+            # Hard delete: remove from storage
+            delete_result = storage_service.delete_file(
+                file_path=resume_file.file_path,
+                storage_type=resume_file.storage_type,
+                s3_bucket=resume_file.s3_bucket
+            )
+            
+            if not delete_result.success:
+                logger.error(f"Storage deletion failed for file {file_id}: {delete_result.error_message}")
+                return jsonify({
+                    'success': False,
+                    'message': f'Failed to delete file from storage: {delete_result.error_message}'
+                }), 500
+            
+            # Remove from database completely
+            db.session.delete(resume_file)
+            delete_type = 'hard'
+            
+        else:
+            # Soft delete: mark as inactive
+            resume_file.is_active = False
+            resume_file.updated_at = datetime.datetime.utcnow()
+            delete_type = 'soft'
+        
+        # Commit the database changes
+        db.session.commit()
+        
+        # Log the deletion for audit purposes
+        logger.info(f"File {file_id} {delete_type} deleted by user {current_user_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'File {"permanently" if delete_type == "hard" else ""} deleted successfully',
+            'file_id': file_id,
+            'delete_type': delete_type
+        }), 200
+        
+    except Exception as e:
+        # Rollback any database changes
+        db.session.rollback()
+        logger.error(f"Unexpected error during file deletion: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Unexpected error during file deletion: {str(e)}'
+        }), 500
+
+
 @api.route('/api/register', methods=['POST'])
 def register():
     """
