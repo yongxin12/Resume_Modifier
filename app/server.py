@@ -12,10 +12,13 @@ from app.services.google_docs_service import GoogleDocsService
 from app.services.google_drive_service import GoogleDriveService
 from app.services.pdf_generator import PDFGenerator
 from app.response_template.resume_schema import RESUME_TEMPLATE
-from app.models.temp import User, Resume, JobDescription, GoogleAuth, ResumeTemplate, GeneratedDocument
+from app.models.temp import User, Resume, JobDescription, GoogleAuth, ResumeTemplate, GeneratedDocument, ResumeFile
 from app.utils.feedback_validator import FeedbackValidator
 from app.utils.jwt_utils import generate_token, token_required
 from app.utils.profile_validator import ProfileValidator
+from app.utils.file_validator import FileValidator
+from app.services.file_storage_service import FileStorageService
+from app.services.file_processing_service import FileProcessingService
 from googleapiclient.errors import HttpError
 import datetime
 import io
@@ -483,6 +486,260 @@ def process_feedback():
         return jsonify({
             "error": "Failed to process feedback",
             "details": str(e)
+        }), 500
+
+@api.route('/api/files/upload', methods=['POST'])
+@token_required
+def upload_file():
+    """
+    Upload a resume file (PDF or DOCX)
+    ---
+    tags:
+      - File Management
+    consumes:
+      - multipart/form-data
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - name: file
+        in: formData
+        required: true
+        type: file
+        description: Resume file to upload (PDF or DOCX)
+      - name: process
+        in: query
+        required: false
+        type: boolean
+        default: true
+        description: Whether to process file content (extract text)
+    responses:
+      201:
+        description: File uploaded successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "File uploaded successfully"
+            file:
+              type: object
+              properties:
+                file_id:
+                  type: integer
+                  example: 123
+                user_id:
+                  type: integer
+                  example: 1
+                original_filename:
+                  type: string
+                  example: "resume.pdf"
+                sanitized_filename:
+                  type: string
+                  example: "secure_resume_20241025.pdf"
+                file_size:
+                  type: integer
+                  example: 245760
+                file_type:
+                  type: string
+                  example: "pdf"
+                storage_type:
+                  type: string
+                  example: "local"
+                download_url:
+                  type: string
+                  example: "http://localhost:5001/api/files/123/download"
+                upload_date:
+                  type: string
+                  format: date-time
+                extracted_text:
+                  type: string
+                  example: "Resume content..."
+                metadata:
+                  type: object
+                  example: {"word_count": 250, "page_count": 2}
+      400:
+        description: Invalid request or validation failed
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File validation failed"
+            errors:
+              type: array
+              items:
+                type: string
+      401:
+        description: Authentication required
+      500:
+        description: Upload failed
+    """
+    try:
+        # Get current user from token
+        current_user_id = request.user['user_id']
+        
+        # Check if file is provided
+        if 'file' not in request.files:
+            return jsonify({
+                'success': False,
+                'message': 'No file provided'
+            }), 400
+        
+        uploaded_file = request.files['file']
+        
+        # Check if filename is provided
+        if uploaded_file.filename == '':
+            return jsonify({
+                'success': False,
+                'message': 'No filename provided'
+            }), 400
+        
+        # Check if processing is requested (default: true)
+        should_process = request.args.get('process', 'true').lower() == 'true'
+        
+        # Initialize services
+        file_validator = FileValidator()
+        
+        # Storage configuration (should be moved to app config)
+        storage_config = {
+            'storage_type': os.getenv('FILE_STORAGE_TYPE', 'local'),
+            'local_storage_path': os.getenv('LOCAL_STORAGE_PATH', '/tmp/resume_files'),
+            'base_url': os.getenv('BASE_URL', 'http://localhost:5001'),
+            's3_bucket': os.getenv('S3_BUCKET', ''),
+            's3_region': os.getenv('S3_REGION', 'us-east-1'),
+            'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
+            'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', '')
+        }
+        
+        file_storage_service = FileStorageService(storage_config)
+        
+        # Validate file
+        validation_result = file_validator.validate_file(uploaded_file)
+        
+        if not validation_result.is_valid:
+            return jsonify({
+                'success': False,
+                'message': 'File validation failed',
+                'errors': validation_result.errors
+            }), 400
+        
+        # Upload file to storage
+        storage_result = file_storage_service.upload_file(
+            file_storage=uploaded_file,
+            user_id=current_user_id,
+            filename=validation_result.sanitized_filename
+        )
+        
+        if not storage_result.success:
+            return jsonify({
+                'success': False,
+                'message': 'File storage failed',
+                'error': storage_result.error_message
+            }), 500
+        
+        # Initialize processing variables
+        extracted_text = None
+        metadata = {}
+        keywords = []
+        language = None
+        processing_warning = None
+        
+        # Process file content if requested
+        if should_process:
+            try:
+                file_processor = FileProcessingService()
+                
+                # Reset file pointer for processing
+                uploaded_file.seek(0)
+                
+                processing_result = file_processor.process_file(uploaded_file)
+                
+                if processing_result.success:
+                    extracted_text = processing_result.text
+                    metadata = processing_result.metadata or {}
+                    keywords = processing_result.keywords or []
+                    language = processing_result.language
+                else:
+                    processing_warning = f"Text extraction failed: {processing_result.error_message}"
+                    
+            except Exception as e:
+                processing_warning = f"File processing error: {str(e)}"
+        
+        # Create database record
+        try:
+            resume_file = ResumeFile(
+                user_id=current_user_id,
+                original_filename=uploaded_file.filename,
+                stored_filename=validation_result.sanitized_filename,
+                file_path=storage_result.file_path if storage_result.storage_type == 'local' else storage_result.s3_key,
+                file_size=storage_result.file_size,
+                mime_type=uploaded_file.content_type or 'application/octet-stream',
+                storage_type=storage_result.storage_type,
+                s3_bucket=getattr(storage_result, 's3_bucket', None),
+                file_hash=getattr(validation_result, 'file_hash', None) or 'temp_hash',
+                extracted_text=extracted_text,
+                is_processed=should_process and extracted_text is not None,
+                processing_status='completed' if extracted_text else 'pending',
+                processing_error=processing_warning,
+                tags=[],
+                created_at=datetime.datetime.utcnow(),
+                updated_at=datetime.datetime.utcnow()
+            )
+            
+            db.session.add(resume_file)
+            db.session.commit()
+            
+            # Prepare response
+            response_data = {
+                'success': True,
+                'message': 'File uploaded successfully',
+                'file': {
+                    'file_id': resume_file.id,
+                    'user_id': resume_file.user_id,
+                    'original_filename': resume_file.original_filename,
+                    'stored_filename': resume_file.stored_filename,
+                    'file_size': resume_file.file_size,
+                    'mime_type': resume_file.mime_type,
+                    'storage_type': resume_file.storage_type,
+                    'storage_path': resume_file.file_path,
+                    'download_url': storage_result.url,
+                    'upload_date': resume_file.created_at.isoformat(),
+                    'extracted_text': resume_file.extracted_text,
+                    'is_processed': resume_file.is_processed,
+                    'processing_status': resume_file.processing_status,
+                    'file_hash': resume_file.file_hash,
+                    's3_bucket': resume_file.s3_bucket
+                }
+            }
+            
+            # Add processing warning if any
+            if processing_warning:
+                response_data['processing_warning'] = processing_warning
+            
+            return jsonify(response_data), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'message': 'Database error occurred while saving file record',
+                'error': str(e)
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': 'File upload failed',
+            'error': str(e)
         }), 500
 
 @api.route('/api/register', methods=['POST'])
