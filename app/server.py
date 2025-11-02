@@ -609,16 +609,15 @@ def upload_file():
         # Initialize services
         file_validator = FileValidator()
         
-        # Storage configuration (should be moved to app config)
-        storage_config = {
-            'storage_type': os.getenv('FILE_STORAGE_TYPE', 'local'),
-            'local_storage_path': os.getenv('LOCAL_STORAGE_PATH', '/tmp/resume_files'),
-            'base_url': os.getenv('BASE_URL', 'http://localhost:5001'),
-            's3_bucket': os.getenv('S3_BUCKET', ''),
-            's3_region': os.getenv('S3_REGION', 'us-east-1'),
-            'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
-            'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', '')
-        }
+        # Get centralized storage configuration
+        from app.utils.storage_config import StorageConfigManager
+        try:
+            storage_config = StorageConfigManager.get_storage_config_dict()
+        except ValueError as e:
+            return jsonify({
+                'success': False,
+                'message': f'Storage configuration error: {str(e)}'
+            }), 500
         
         file_storage_service = FileStorageService(storage_config)
         
@@ -856,16 +855,15 @@ def download_file(file_id):
                 'message': 'Access denied to this file'
             }), 403
         
-        # Initialize storage service with configuration
-        storage_config = {
-            'storage_type': os.getenv('FILE_STORAGE_TYPE', 'local'),
-            'local_storage_path': os.getenv('LOCAL_STORAGE_PATH', '/tmp/resume_files'),
-            'base_url': os.getenv('BASE_URL', 'http://localhost:5001'),
-            's3_bucket': os.getenv('S3_BUCKET', ''),
-            's3_region': os.getenv('S3_REGION', 'us-east-1'),
-            'aws_access_key_id': os.getenv('AWS_ACCESS_KEY_ID', ''),
-            'aws_secret_access_key': os.getenv('AWS_SECRET_ACCESS_KEY', '')
-        }
+        # Initialize storage service with centralized configuration
+        from app.utils.storage_config import StorageConfigManager
+        try:
+            storage_config = StorageConfigManager.get_storage_config_dict()
+        except ValueError as e:
+            return jsonify({
+                'success': False,
+                'message': f'Storage configuration error: {str(e)}'
+            }), 500
         
         storage_service = FileStorageService(storage_config)
         
@@ -1050,15 +1048,15 @@ def delete_file(file_id):
         
         # Perform storage deletion if force delete and file has a path
         if force_delete and resume_file.file_path:
-            # Initialize storage service with configuration for hard delete only
-            storage_config = {
-                'storage_type': os.getenv('FILE_STORAGE_TYPE', 'local'),
-                'local_base_path': os.getenv('LOCAL_STORAGE_PATH', 'uploads/files'),
-                's3_bucket': os.getenv('AWS_S3_BUCKET', ''),
-                's3_access_key': os.getenv('AWS_ACCESS_KEY_ID', ''),
-                's3_secret_key': os.getenv('AWS_SECRET_ACCESS_KEY', ''),
-                's3_region': os.getenv('AWS_S3_REGION', 'us-east-1')
-            }
+            # Initialize storage service with centralized configuration
+            from app.utils.storage_config import StorageConfigManager
+            try:
+                storage_config = StorageConfigManager.get_storage_config_dict()
+            except ValueError as e:
+                return jsonify({
+                    'success': False,
+                    'message': f'Storage configuration error: {str(e)}'
+                }), 500
             
             storage_service = FileStorageService(storage_config)
             
@@ -1106,6 +1104,540 @@ def delete_file(file_id):
         return jsonify({
             'success': False,
             'message': f'Unexpected error during file deletion: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files', methods=['GET'])
+@token_required
+def list_files():
+    """
+    List files for the authenticated user
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        default: 1
+        description: Page number for pagination (1-based)
+      - name: limit
+        in: query
+        type: integer
+        default: 10
+        description: Number of files per page (max 100)
+      - name: sort_by
+        in: query
+        type: string
+        enum: [created_at, updated_at, file_size, original_filename]
+        default: created_at
+        description: Field to sort by
+      - name: sort_order
+        in: query
+        type: string
+        enum: [asc, desc]
+        default: desc
+        description: Sort order
+      - name: mime_type
+        in: query
+        type: string
+        description: Filter by MIME type (e.g., application/pdf)
+      - name: processing_status
+        in: query
+        type: string
+        enum: [pending, processing, completed, failed]
+        description: Filter by processing status
+      - name: search
+        in: query
+        type: string
+        description: Search in filenames (case-insensitive)
+    responses:
+      200:
+        description: Files listed successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            files:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 123
+                  original_filename:
+                    type: string
+                    example: resume.pdf
+                  file_size:
+                    type: integer
+                    example: 1024
+                  mime_type:
+                    type: string
+                    example: application/pdf
+                  storage_type:
+                    type: string
+                    example: local
+                  created_at:
+                    type: string
+                    format: date-time
+                    example: "2024-01-01T10:00:00Z"
+                  updated_at:
+                    type: string
+                    format: date-time
+                    example: "2024-01-01T10:00:00Z"
+                  processing_status:
+                    type: string
+                    example: completed
+                  page_count:
+                    type: integer
+                    example: 2
+            total:
+              type: integer
+              example: 25
+            page:
+              type: integer
+              example: 1
+            limit:
+              type: integer
+              example: 10
+            has_next:
+              type: boolean
+              example: true
+            has_prev:
+              type: boolean
+              example: false
+      400:
+        description: Invalid query parameters
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: Invalid pagination parameters
+      401:
+        description: Authentication required
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
+              example: Authentication required
+      500:
+        description: Server error during listing
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: Error retrieving files
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user ID from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # Parse query parameters
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 10, type=int)
+        sort_by = request.args.get('sort_by', 'created_at')
+        sort_order = request.args.get('sort_order', 'desc')
+        mime_type = request.args.get('mime_type')
+        processing_status = request.args.get('processing_status')
+        search = request.args.get('search')
+        
+        # Validate pagination parameters
+        if page < 1:
+            return jsonify({
+                'success': False,
+                'message': 'Page number must be 1 or greater'
+            }), 400
+            
+        if limit < 1 or limit > 100:
+            return jsonify({
+                'success': False,
+                'message': 'Limit must be between 1 and 100'
+            }), 400
+        
+        # Validate sort parameters
+        valid_sort_fields = ['created_at', 'updated_at', 'file_size', 'original_filename']
+        if sort_by not in valid_sort_fields:
+            return jsonify({
+                'success': False,
+                'message': f'Invalid sort field. Must be one of: {", ".join(valid_sort_fields)}'
+            }), 400
+            
+        valid_sort_orders = ['asc', 'desc']
+        if sort_order not in valid_sort_orders:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid sort order. Must be "asc" or "desc"'
+            }), 400
+        
+        # Validate processing status
+        if processing_status:
+            valid_statuses = ['pending', 'processing', 'completed', 'failed']
+            if processing_status not in valid_statuses:
+                return jsonify({
+                    'success': False,
+                    'message': f'Invalid processing status. Must be one of: {", ".join(valid_statuses)}'
+                }), 400
+        
+        # Build query
+        query = ResumeFile.query.filter_by(
+            user_id=current_user_id,
+            is_active=True
+        )
+        
+        # Apply filters
+        if mime_type:
+            query = query.filter(ResumeFile.mime_type == mime_type)
+            
+        if processing_status:
+            query = query.filter(ResumeFile.processing_status == processing_status)
+            
+        if search:
+            query = query.filter(ResumeFile.original_filename.ilike(f'%{search}%'))
+        
+        # Apply sorting
+        sort_column = getattr(ResumeFile, sort_by)
+        if sort_order == 'desc':
+            query = query.order_by(sort_column.desc())
+        else:
+            query = query.order_by(sort_column.asc())
+        
+        # Get total count for pagination
+        total_count = query.count()
+        
+        # Apply pagination
+        offset = (page - 1) * limit
+        files = query.offset(offset).limit(limit).all()
+        
+        # Calculate pagination info
+        has_next = total_count > (page * limit)
+        has_prev = page > 1
+        
+        # Format response
+        files_data = []
+        for file in files:
+            files_data.append({
+                'id': file.id,
+                'original_filename': file.original_filename,
+                'file_size': file.file_size,
+                'mime_type': file.mime_type,
+                'storage_type': file.storage_type,
+                'created_at': file.created_at.isoformat() if file.created_at else None,
+                'updated_at': file.updated_at.isoformat() if file.updated_at else None,
+                'processing_status': file.processing_status,
+                'page_count': file.page_count
+            })
+        
+        return jsonify({
+            'success': True,
+            'files': files_data,
+            'total': total_count,
+            'page': page,
+            'limit': limit,
+            'has_next': has_next,
+            'has_prev': has_prev
+        }), 200
+        
+    except Exception as e:
+        # Log the error
+        logger.error(f"Unexpected error during file listing: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving files: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files/<int:file_id>/process', methods=['POST'])
+@token_required
+def process_file(file_id):
+    """
+    Process a resume file to extract text content and metadata
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to process
+      - name: force
+        in: query
+        required: false
+        type: boolean
+        default: false
+        description: Force reprocessing of already processed files
+    responses:
+      200:
+        description: File processed successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "File processed successfully"
+            processing_result:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                text:
+                  type: string
+                  example: "Extracted resume text content..."
+                file_type:
+                  type: string
+                  example: "pdf"
+                metadata:
+                  type: object
+                  example: {"author": "John Doe", "creation_date": "2024-01-01"}
+                processing_time:
+                  type: number
+                  example: 1.23
+                page_count:
+                  type: integer
+                  example: 2
+                paragraph_count:
+                  type: integer
+                  example: 15
+                keywords:
+                  type: array
+                  items:
+                    type: string
+                  example: ["Python", "Machine Learning", "Data Science"]
+                language:
+                  type: string
+                  example: "en"
+      400:
+        description: Bad request (invalid file format, missing parameters, etc.)
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File is already being processed"
+      401:
+        description: Unauthorized access
+        schema:
+          type: object
+          properties:
+            error:
+              type: string
+              example: "Token is missing or invalid"
+      403:
+        description: Forbidden - user doesn't own the file
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Access denied. You don't have permission to process this file."
+      404:
+        description: File not found
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File not found"
+      500:
+        description: Internal server error
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Error processing file"
+    """
+    try:
+        # Import logging
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Get current user from token
+        current_user_id = request.user.get('user_id')
+        
+        # Get force parameter
+        force = request.args.get('force', 'false').lower() == 'true'
+        
+        # Validate file_id format
+        if not isinstance(file_id, int) or file_id <= 0:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Find the file
+        file_record = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id,
+            is_active=True
+        ).first()
+        
+        if not file_record:
+            return jsonify({
+                'success': False,
+                'message': 'File not found'
+            }), 404
+        
+        # Check if file is already processed (unless forcing)
+        if not force and file_record.processing_status == 'completed':
+            return jsonify({
+                'success': False,
+                'message': 'File has already been processed. Use force=true to reprocess.'
+            }), 400
+        
+        # Check if file is currently being processed
+        if file_record.processing_status == 'processing':
+            return jsonify({
+                'success': False,
+                'message': 'File is already being processed'
+            }), 400
+        
+        # Update status to processing
+        file_record.processing_status = 'processing'
+        db.session.commit()
+        
+        try:
+            # Initialize storage service with centralized configuration
+            from app.utils.storage_config import StorageConfigManager
+            try:
+                storage_config = StorageConfigManager.get_storage_config_dict()
+            except ValueError as e:
+                file_record.processing_status = 'failed'
+                file_record.error_message = f'Storage configuration error: {str(e)}'
+                db.session.commit()
+                return jsonify({
+                    'success': False,
+                    'message': f'Storage configuration error: {str(e)}'
+                }), 500
+            
+            # Download the file from storage
+            storage_service = FileStorageService(storage_config)
+            
+            download_result = storage_service.download_file(file_record.storage_path)
+            
+            if not download_result.success:
+                file_record.processing_status = 'failed'
+                file_record.error_message = f"Failed to download file: {download_result.error_message}"
+                db.session.commit()
+                
+                logger.error(f"Failed to download file {file_id} for processing: {download_result.error_message}")
+                
+                return jsonify({
+                    'success': False,
+                    'message': f'Failed to download file for processing: {download_result.error_message}'
+                }), 500
+            
+            # Create file-like object from downloaded content
+            import io
+            file_like_obj = io.BytesIO(download_result.content)
+            file_like_obj.filename = file_record.original_filename
+            file_like_obj.content_type = file_record.mime_type
+            
+            # Process the file using FileProcessingService
+            processing_service = FileProcessingService()
+            processing_result = processing_service.process_file(file_like_obj)
+            
+            if processing_result.success:
+                # Update file record with processing results
+                file_record.processing_status = 'completed'
+                file_record.extracted_text = processing_result.text
+                file_record.page_count = processing_result.page_count
+                file_record.metadata = processing_result.metadata
+                file_record.language = processing_result.language
+                file_record.keywords = processing_result.keywords
+                file_record.processing_time = processing_result.processing_time
+                
+                # Log successful processing
+                logger.info(f"File {file_id} processed successfully for user {current_user_id}")
+                
+                db.session.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'File processed successfully',
+                    'processing_result': {
+                        'success': processing_result.success,
+                        'text': processing_result.text,
+                        'file_type': processing_result.file_type,
+                        'metadata': processing_result.metadata,
+                        'processing_time': processing_result.processing_time,
+                        'page_count': processing_result.page_count,
+                        'paragraph_count': processing_result.paragraph_count,
+                        'keywords': processing_result.keywords,
+                        'language': processing_result.language
+                    }
+                }), 200
+            else:
+                # Processing failed
+                file_record.processing_status = 'failed'
+                file_record.error_message = processing_result.error_message
+                
+                # Log processing failure
+                logger.error(f"File {file_id} processing failed for user {current_user_id}: {processing_result.error_message}")
+                
+                db.session.commit()
+                
+                return jsonify({
+                    'success': False,
+                    'message': f'File processing failed: {processing_result.error_message}'
+                }), 500
+                
+        except Exception as processing_error:
+            # Update status to failed on processing error
+            file_record.processing_status = 'failed'
+            file_record.error_message = str(processing_error)
+            db.session.commit()
+            
+            # Log processing error
+            logger.error(f"Error processing file {file_id} for user {current_user_id}: {str(processing_error)}")
+            
+            return jsonify({
+                'success': False,
+                'message': f'Error processing file: {str(processing_error)}'
+            }), 500
+            
+    except Exception as e:
+        # Log the error
+        logger.error(f"Unexpected error during file processing: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error processing file: {str(e)}'
         }), 500
 
 

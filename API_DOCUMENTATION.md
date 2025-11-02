@@ -640,6 +640,285 @@ Potential improvements:
 
 ---
 
+---
+
+## File Management Endpoints
+
+### Upload File
+```http
+POST /api/files/upload
+```
+
+**Description:** Upload resume files (PDF or DOCX) with automatic processing
+
+**Headers:**
+```
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+**Request Body:**
+- `file`: Resume file (PDF or DOCX, max 10MB)
+- `process`: Optional boolean (default: true) - whether to process file content
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "File uploaded successfully",
+  "file": {
+    "file_id": 123,
+    "user_id": 1,
+    "original_filename": "resume.pdf",
+    "sanitized_filename": "secure_resume_20241025.pdf",
+    "file_size": 245760,
+    "file_type": "pdf",
+    "mime_type": "application/pdf",
+    "processing_status": "completed",
+    "extracted_text": "John Doe Software Engineer...",
+    "language": "en",
+    "page_count": 2,
+    "upload_date": "2024-10-25T10:30:00Z"
+  }
+}
+```
+
+**Status Codes:**
+- `201`: File uploaded successfully
+- `400`: Invalid file, file type not supported, or file too large
+- `401`: Authentication required
+- `500`: Upload failed
+
+---
+
+### Download File
+```http
+GET /api/files/{file_id}/download
+```
+
+**Description:** Download an uploaded file
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `inline`: Optional boolean (default: false) - display inline instead of download
+
+**Response:**
+- Binary file content with appropriate headers
+
+**Status Codes:**
+- `200`: File downloaded successfully
+- `401`: Authentication required
+- `403`: Access denied to this file
+- `404`: File not found
+- `500`: Download failed
+
+---
+
+### List Files
+```http
+GET /api/files
+```
+
+**Description:** List user's uploaded files with pagination and filtering
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `page`: Page number (default: 1)
+- `limit`: Files per page (default: 10, max: 100)
+- `sort_by`: Sort field (created_at, updated_at, file_size, original_filename)
+- `sort_order`: Sort order (asc, desc)
+- `mime_type`: Filter by MIME type
+- `processing_status`: Filter by processing status (pending, processing, completed, failed)
+
+**Response:**
+```json
+{
+  "success": true,
+  "files": [
+    {
+      "id": 123,
+      "original_filename": "resume.pdf",
+      "file_size": 245760,
+      "file_type": "pdf",
+      "processing_status": "completed",
+      "upload_date": "2024-10-25T10:30:00Z",
+      "page_count": 2,
+      "language": "en"
+    }
+  ],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 5,
+    "total_files": 42,
+    "files_per_page": 10
+  }
+}
+```
+
+**Status Codes:**
+- `200`: Files retrieved successfully
+- `401`: Authentication required
+- `500`: Server error
+
+---
+
+### Process File
+```http
+POST /api/files/{file_id}/process
+```
+
+**Description:** Extract text content from an uploaded file
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `force`: Optional boolean (default: false) - force reprocessing of already processed files
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "File processed successfully",
+  "processing_result": {
+    "success": true,
+    "text": "John Doe Software Engineer with 5 years of experience...",
+    "page_count": 2,
+    "language": "en",
+    "metadata": {
+      "author": "John Doe",
+      "creation_date": "2024-01-15",
+      "word_count": 485
+    }
+  },
+  "file_info": {
+    "file_id": 123,
+    "processing_status": "completed",
+    "processing_date": "2024-10-25T10:35:00Z"
+  }
+}
+```
+
+**Status Codes:**
+- `200`: File processed successfully
+- `400`: Invalid file ID or file already processed (use force=true to reprocess)
+- `401`: Authentication required
+- `403`: Access denied to this file
+- `404`: File not found
+- `408`: Processing timeout
+- `500`: Processing failed
+
+---
+
+### Delete File
+```http
+DELETE /api/files/{file_id}
+```
+
+**Description:** Delete an uploaded file (soft delete by default)
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Query Parameters:**
+- `force`: Optional boolean (default: false) - permanent deletion from storage (hard delete)
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "File deleted successfully",
+  "file_id": 123,
+  "delete_type": "soft"
+}
+```
+
+**Status Codes:**
+- `200`: File deleted successfully
+- `401`: Authentication required
+- `403`: Access denied to this file
+- `404`: File not found
+- `500`: Deletion failed
+
+---
+
+## File Management Error Codes
+
+The file management system uses standardized error codes for better error handling:
+
+### Authentication Errors (AUTH_xxx)
+- `AUTH_001`: Authentication token missing
+- `AUTH_002`: Authentication token invalid
+- `AUTH_003`: Authentication token expired
+- `AUTH_004`: Access denied to resource
+
+### File Validation Errors (FILE_xxx)
+- `FILE_001`: No file provided
+- `FILE_002`: File size exceeds limit
+- `FILE_003`: File type not supported
+- `FILE_004`: File format invalid
+- `FILE_005`: File corrupted
+- `FILE_006`: Filename invalid
+
+### Storage Errors (STORAGE_xxx)
+- `STORAGE_001`: Storage configuration error
+- `STORAGE_002`: File upload failed
+- `STORAGE_003`: File download failed
+- `STORAGE_004`: File deletion failed
+
+### Processing Errors (PROCESS_xxx)
+- `PROCESS_001`: File processing failed
+- `PROCESS_002`: Processing timeout
+- `PROCESS_003`: Unsupported file format
+- `PROCESS_004`: Text extraction failed
+
+### Database Errors (DB_xxx)
+- `DB_001`: Database operation failed
+- `DB_002`: Record not found
+- `DB_003`: Record already exists
+
+---
+
+## File Management Configuration
+
+### Environment Variables
+
+**Storage Configuration:**
+- `FILE_STORAGE_TYPE`: Storage type ('local' or 's3')
+- `LOCAL_STORAGE_PATH`: Path for local file storage
+- `AWS_S3_BUCKET`: S3 bucket name (if using S3)
+- `AWS_S3_REGION`: AWS region
+- `AWS_ACCESS_KEY_ID`: AWS access key
+- `AWS_SECRET_ACCESS_KEY`: AWS secret key
+
+**Upload Limits:**
+- `MAX_FILE_SIZE`: Maximum file size in bytes (default: 10MB)
+- `ALLOWED_MIME_TYPES`: Comma-separated list of allowed MIME types
+- `MAX_FILES_PER_USER`: Maximum files per user (default: 100)
+- `UPLOAD_TIMEOUT_SECONDS`: Upload timeout (default: 300 seconds)
+
+**Processing Configuration:**
+- `MAX_EXTRACTED_TEXT_LENGTH`: Maximum extracted text length
+- `PROCESSING_TIMEOUT_SECONDS`: Processing timeout (default: 60 seconds)
+- `ENABLE_OCR`: Enable OCR for image-based PDFs (default: false)
+- `ENABLE_LANGUAGE_DETECTION`: Enable language detection (default: true)
+
+---
+
 ## Support
 
 For issues or questions, please refer to the project documentation or contact the development team.
+
+```
