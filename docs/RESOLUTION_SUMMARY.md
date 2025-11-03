@@ -266,9 +266,34 @@ GitHub Copilot: Here’s an easy-to-understand workflow for the Google Integrati
 
 Summary: The workflow lets users securely connect their Google account, stores their tokens, and allows your app to work with their Google Docs/Drive as needed, all while keeping their data safe and requiring their permission at every step.
 
-yongxin12: {"web":{"client_id":"[REDACTED_GOOGLE_CLIENT_ID]","project_id":"resumeeditor-475321","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":"[REDACTED_GOOGLE_CLIENT_SECRET]","redirect_uris":["http://localhost:5001"],"javascript_origins":["http://localhost:5001"]}}
+## ⚠️ REDACTED: Google OAuth Credentials
 
-base on my project setup and the above info, what should be placed in the GOOGLE_REDIRECT_URI? what is it for? explain in detail
+**Security Note**: The actual Google OAuth credentials have been redacted from this file to comply with repository security policies. Store sensitive credentials in `.env` files or GitHub Secrets, not in documentation.
+
+Example format for Google OAuth configuration:
+```json
+{
+  "web": {
+    "client_id": "[REDACTED]",
+    "project_id": "your-project-id",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_secret": "[REDACTED]",
+    "redirect_uris": ["http://localhost:5001"],
+    "javascript_origins": ["http://localhost:5001"]
+  }
+}
+```
+
+**How to set up Google OAuth:**
+
+1. Create a Google Cloud project at https://console.cloud.google.com
+2. Generate OAuth 2.0 credentials (Web Application type)
+3. Store credentials securely in your `.env` file
+4. Never commit credentials to version control
+
+**What should be placed in the GOOGLE_REDIRECT_URI? What is it for?**
 
 GitHub Copilot: You should set GOOGLE_REDIRECT_URI in your .env file to:
 ```

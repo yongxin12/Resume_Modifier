@@ -916,6 +916,176 @@ def download_file(file_id):
         }), 500
 
 
+@api.route('/api/files/<int:file_id>/info', methods=['GET'])
+@token_required
+def get_file_info(file_id):
+    """
+    Get detailed file information including metadata and text preview
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to get info for
+      - name: include_text_preview
+        in: query
+        required: false
+        type: boolean
+        default: true
+        description: Whether to include extracted text preview (first 500 chars)
+    responses:
+      200:
+        description: File information retrieved successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            file:
+              type: object
+              properties:
+                id:
+                  type: integer
+                  example: 42
+                original_filename:
+                  type: string
+                  example: "Resume_2024.pdf"
+                file_size:
+                  type: integer
+                  example: 524288
+                file_size_formatted:
+                  type: string
+                  example: "512 KB"
+                mime_type:
+                  type: string
+                  example: "application/pdf"
+                storage_type:
+                  type: string
+                  example: "local"
+                processing_status:
+                  type: string
+                  example: "completed"
+                is_processed:
+                  type: boolean
+                  example: true
+                extracted_text_length:
+                  type: integer
+                  example: 2104
+                extracted_text_preview:
+                  type: string
+                  example: "John Doe\\nSoftware Engineer with 5+ years..."
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  example: ["resume", "tech"]
+                created_at:
+                  type: string
+                  example: "2025-11-01T10:30:00Z"
+                updated_at:
+                  type: string
+                  example: "2025-11-01T10:30:00Z"
+      401:
+        description: Authentication required
+      403:
+        description: Access denied to this file
+      404:
+        description: File not found
+      500:
+        description: Server error
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user ID
+        current_user_id = request.user.get('user_id')
+        
+        # Convert file_id to integer if it's a string
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Get include_text_preview parameter
+        include_text_preview = request.args.get('include_text_preview', 'true').lower() == 'true'
+        
+        # Get file from database
+        resume_file = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id,
+            is_active=True
+        ).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found'
+            }), 404
+        
+        # Prepare file info
+        file_info = {
+            'id': resume_file.id,
+            'original_filename': resume_file.original_filename,
+            'stored_filename': resume_file.stored_filename,
+            'file_size': resume_file.file_size,
+            'file_size_formatted': resume_file.format_file_size(),
+            'mime_type': resume_file.mime_type,
+            'storage_type': resume_file.storage_type,
+            'file_path': resume_file.file_path,
+            's3_bucket': resume_file.s3_bucket,
+            'file_hash': resume_file.file_hash,
+            'processing_status': resume_file.processing_status,
+            'is_processed': resume_file.is_processed,
+            'processing_error': resume_file.processing_error,
+            'tags': resume_file.tags or [],
+            'is_active': resume_file.is_active,
+            'created_at': resume_file.created_at.isoformat() if resume_file.created_at else None,
+            'updated_at': resume_file.updated_at.isoformat() if resume_file.updated_at else None
+        }
+        
+        # Add extracted text info
+        if resume_file.extracted_text:
+            file_info['extracted_text_length'] = len(resume_file.extracted_text)
+            if include_text_preview:
+                # Include first 500 characters as preview
+                preview_length = 500
+                file_info['extracted_text_preview'] = resume_file.extracted_text[:preview_length]
+                if len(resume_file.extracted_text) > preview_length:
+                    file_info['extracted_text_preview'] += "..."
+                file_info['has_more_text'] = len(resume_file.extracted_text) > preview_length
+            else:
+                file_info['extracted_text_preview'] = None
+        else:
+            file_info['extracted_text_length'] = 0
+            file_info['extracted_text_preview'] = None
+            file_info['has_more_text'] = False
+        
+        return jsonify({
+            'success': True,
+            'file': file_info
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during file info retrieval: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving file information: {str(e)}'
+        }), 500
+
+
 @api.route('/api/files/<file_id>', methods=['DELETE'])
 @token_required
 def delete_file(file_id):
@@ -1358,6 +1528,216 @@ def list_files():
         return jsonify({
             'success': False,
             'message': f'Error retrieving files: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files', methods=['DELETE'])
+@token_required
+def bulk_delete_files():
+    """
+    Bulk delete multiple files by their IDs
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - in: body
+        name: file_ids
+        required: true
+        schema:
+          type: object
+          properties:
+            file_ids:
+              type: array
+              items:
+                type: integer
+              example: [1, 2, 3, 4]
+              description: Array of file IDs to delete
+            force:
+              type: boolean
+              default: false
+              description: If true, permanently delete from storage (hard delete). If false, only mark as inactive (soft delete)
+    responses:
+      200:
+        description: Bulk delete completed (may include partial failures)
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Bulk delete completed"
+            deleted_count:
+              type: integer
+              example: 3
+            failed_count:
+              type: integer
+              example: 1
+            total_requested:
+              type: integer
+              example: 4
+            failed_files:
+              type: array
+              items:
+                type: object
+                properties:
+                  file_id:
+                    type: integer
+                  error:
+                    type: string
+              example: [{"file_id": 4, "error": "File not found"}]
+      400:
+        description: Invalid request format or missing file_ids
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "file_ids array is required"
+      401:
+        description: Authentication required
+      500:
+        description: Server error during bulk deletion
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user ID
+        current_user_id = request.user.get('user_id')
+        
+        # Get request data
+        data = request.get_json()
+        if not data or 'file_ids' not in data:
+            return jsonify({
+                'success': False,
+                'message': 'file_ids array is required'
+            }), 400
+        
+        file_ids = data.get('file_ids', [])
+        force_delete = data.get('force', False)
+        
+        if not isinstance(file_ids, list) or len(file_ids) == 0:
+            return jsonify({
+                'success': False,
+                'message': 'file_ids must be a non-empty array'
+            }), 400
+        
+        # Validate file_ids are integers
+        try:
+            file_ids = [int(fid) for fid in file_ids]
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'All file_ids must be valid integers'
+            }), 400
+        
+        deleted_count = 0
+        failed_count = 0
+        failed_files = []
+        
+        # Initialize storage service
+        storage_service = FileStorageService({
+            'storage_type': os.environ.get('FILE_STORAGE_TYPE', 'local'),
+            'local_storage_path': os.environ.get('FILE_STORAGE_PATH', '/app/storage'),
+            'aws_access_key_id': os.environ.get('AWS_ACCESS_KEY_ID'),
+            'aws_secret_access_key': os.environ.get('AWS_SECRET_ACCESS_KEY'),
+            's3_bucket_name': os.environ.get('AWS_S3_BUCKET_NAME'),
+            'base_url': request.host_url.rstrip('/')
+        })
+        
+        # Process each file
+        for file_id in file_ids:
+            try:
+                # Get file from database (must belong to current user)
+                resume_file = ResumeFile.query.filter_by(
+                    id=file_id,
+                    user_id=current_user_id,
+                    is_active=True
+                ).first()
+                
+                if not resume_file:
+                    failed_files.append({
+                        'file_id': file_id,
+                        'error': 'File not found or access denied'
+                    })
+                    failed_count += 1
+                    continue
+                
+                # Delete from storage if force delete or if file exists
+                if force_delete:
+                    # Hard delete - remove from storage
+                    try:
+                        delete_result = storage_service.delete_file(
+                            resume_file.file_path,
+                            resume_file.storage_type,
+                            resume_file.s3_bucket
+                        )
+                        
+                        if not delete_result.success:
+                            logger.warning(f"Failed to delete file from storage: {delete_result.error_message}")
+                            # Continue with database deletion even if storage deletion fails
+                    except Exception as storage_error:
+                        logger.error(f"Error deleting file from storage: {str(storage_error)}")
+                        # Continue with database deletion even if storage deletion fails
+                    
+                    # Remove from database
+                    db.session.delete(resume_file)
+                else:
+                    # Soft delete - just mark as inactive
+                    resume_file.is_active = False
+                    resume_file.updated_at = datetime.utcnow()
+                
+                db.session.commit()
+                deleted_count += 1
+                
+            except Exception as e:
+                logger.error(f"Error deleting file {file_id}: {str(e)}")
+                failed_files.append({
+                    'file_id': file_id,
+                    'error': str(e)
+                })
+                failed_count += 1
+                # Rollback the transaction for this file
+                db.session.rollback()
+        
+        # Determine overall success
+        total_requested = len(file_ids)
+        success = failed_count == 0
+        
+        message = f"Bulk delete completed. {deleted_count} deleted"
+        if failed_count > 0:
+            message += f", {failed_count} failed"
+        
+        response_data = {
+            'success': success,
+            'message': message,
+            'deleted_count': deleted_count,
+            'failed_count': failed_count,
+            'total_requested': total_requested
+        }
+        
+        # Include failed files info if there were failures
+        if failed_files:
+            response_data['failed_files'] = failed_files
+        
+        # Return 200 even with partial failures (bulk operations often do this)
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during bulk file deletion: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error during bulk deletion: {str(e)}'
         }), 500
 
 
