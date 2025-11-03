@@ -871,7 +871,7 @@ def download_file(file_id):
         # Download file from storage
         try:
             download_result = storage_service.download_file(
-                file_path=resume_file.storage_path
+                file_path=resume_file.file_path
             )
             
             if not download_result.success:
@@ -1928,7 +1928,7 @@ def process_file(file_id):
             # Download the file from storage
             storage_service = FileStorageService(storage_config)
             
-            download_result = storage_service.download_file(file_record.storage_path)
+            download_result = storage_service.download_file(file_record.file_path)
             
             if not download_result.success:
                 file_record.processing_status = 'failed'
