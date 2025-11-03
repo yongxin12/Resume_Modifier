@@ -23,6 +23,7 @@ from googleapiclient.errors import HttpError
 import datetime
 import io
 import os
+from io import BytesIO
 
 # Create blueprint
 api = Blueprint('api', __name__)
@@ -870,9 +871,7 @@ def download_file(file_id):
         # Download file from storage
         try:
             download_result = storage_service.download_file(
-                file_path=resume_file.file_path,
-                storage_type=resume_file.storage_type,
-                s3_bucket=resume_file.s3_bucket
+                file_path=resume_file.storage_path
             )
             
             if not download_result.success:
@@ -898,10 +897,10 @@ def download_file(file_id):
         # Send the file
         try:
             return send_file(
-                download_result.file_path,
+                BytesIO(download_result.content),
                 as_attachment=not inline,
                 download_name=resume_file.original_filename,
-                mimetype=resume_file.mime_type or 'application/octet-stream'
+                mimetype=download_result.content_type or 'application/octet-stream'
             )
         except Exception as e:
             return jsonify({
