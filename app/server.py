@@ -2269,7 +2269,7 @@ def request_password_reset():
                 "message": result.message
             }), 429
         
-        if not result.success and result.error_code == "EMAIL_FAILED":
+        if not result.success and result.error_code == "EMAIL_SEND_FAILED":
             return jsonify({
                 "status": "error",
                 "message": result.message

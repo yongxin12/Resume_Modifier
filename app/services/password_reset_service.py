@@ -16,6 +16,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.extensions import db
 from app.models.temp import User, PasswordResetToken
 from app.services.email_service import email_service, EmailResult
+from app.utils.password_reset_error_handler import (
+    password_reset_error_handler_instance,
+    password_reset_error_handler,
+    PasswordResetErrorCode,
+    PasswordResetSecurityEvent
+)
 
 
 class PasswordResetError(Exception):
@@ -51,6 +57,14 @@ class PasswordResetService:
         self.max_requests_per_ip_per_hour = 10  # Max requests per IP per hour
         self.token_expiry_hours = 1  # Token expiry time in hours
         self.cleanup_interval_hours = 24  # How often to cleanup expired tokens
+
+    def _convert_error_to_result(self, error_dict: Dict[str, Any]) -> PasswordResetResult:
+        """Convert error handler dict to PasswordResetResult"""
+        return PasswordResetResult(
+            success=error_dict.get('status') == 'success',
+            message=error_dict.get('message', 'Unknown error'),
+            error_code=error_dict.get('error_code')
+        )
 
     def _get_user_by_email(self, email: str) -> Optional[User]:
         """
@@ -154,6 +168,7 @@ class PasswordResetService:
             'user_agent': user_agent
         }
 
+    @password_reset_error_handler('password_reset_request')
     def request_password_reset(self, email: str, frontend_url: Optional[str] = None) -> PasswordResetResult:
         """
         Request a password reset for a user.
@@ -178,7 +193,12 @@ class PasswordResetService:
             user = self._get_user_by_email(email)
             if not user:
                 # Return success message even for non-existent users (security best practice)
-                self.logger.warning(f"Password reset requested for non-existent email: {email}")
+                password_reset_error_handler_instance.logger.log_security_event(
+                    event_type=PasswordResetSecurityEvent.PASSWORD_RESET_REQUESTED,
+                    email=email,
+                    error_code=PasswordResetErrorCode.INVALID_EMAIL,
+                    additional_data={'reason': 'non_existent_user'}
+                )
                 return PasswordResetResult(
                     success=True,
                     message="If an account with this email exists, you will receive a password reset link.",
@@ -188,13 +208,12 @@ class PasswordResetService:
             # Check rate limits
             rate_allowed, rate_message = self._check_rate_limits(user.id, ip_address)
             if not rate_allowed:
-                self.logger.warning(f"Rate limit exceeded for user {user.id} from IP {ip_address}")
                 return PasswordResetResult(
                     success=False,
                     message=rate_message,
                     user_id=user.id,
                     rate_limited=True,
-                    error_code="RATE_LIMITED"
+                    error_code=PasswordResetErrorCode.RATE_LIMITED_USER
                 )
             
             # Revoke existing tokens
@@ -237,25 +256,34 @@ class PasswordResetService:
                 token_instance.mark_used()
                 db.session.commit()
                 
-                self.logger.error(f"Failed to send password reset email: {email_result.error_message}")
+                password_reset_error_handler_instance.logger.log_security_event(
+                    event_type=PasswordResetSecurityEvent.PASSWORD_RESET_FAILED,
+                    user_id=user.id,
+                    email=email,
+                    token_id=token_instance.id,
+                    error_code=PasswordResetErrorCode.EMAIL_SEND_FAILED,
+                    additional_data={'email_error': email_result.error_message}
+                )
+                
                 return PasswordResetResult(
                     success=False,
                     message="Failed to send password reset email. Please try again later.",
                     user_id=user.id,
                     email_sent=False,
-                    error_code="EMAIL_FAILED"
+                    error_code=PasswordResetErrorCode.EMAIL_SEND_FAILED
                 )
                 
         except Exception as e:
-            db.session.rollback()
-            error_msg = f"Unexpected error during password reset request: {str(e)}"
-            self.logger.error(error_msg)
-            return PasswordResetResult(
-                success=False,
-                message="An error occurred. Please try again later.",
-                error_code="INTERNAL_ERROR"
+            error_result = password_reset_error_handler_instance.handle_service_error(
+                error=e,
+                operation="password_reset_request",
+                user_id=user.id if 'user' in locals() else None,
+                email=email,
+                error_code=PasswordResetErrorCode.INTERNAL_ERROR
             )
+            return self._convert_error_to_result(error_result)
 
+    @password_reset_error_handler('password_reset_validate')
     def validate_reset_token(self, token: str) -> PasswordResetResult:
         """
         Validate a password reset token without consuming it.
@@ -270,20 +298,21 @@ class PasswordResetService:
             self.logger.info("Validating password reset token")
             
             if not token:
-                return PasswordResetResult(
-                    success=False,
+                error_result = password_reset_error_handler_instance.handle_validation_error(
+                    error_code=PasswordResetErrorCode.MISSING_TOKEN,
                     message="Invalid or missing token.",
-                    error_code="INVALID_TOKEN"
+                    operation="token_validation"
                 )
+                return self._convert_error_to_result(error_result)
             
             # Verify token
             token_instance = PasswordResetToken.verify_token(token)
             if not token_instance:
-                return PasswordResetResult(
-                    success=False,
-                    message="Invalid or expired token.",
-                    error_code="INVALID_TOKEN"
+                error_result = password_reset_error_handler_instance.handle_token_error(
+                    error_code=PasswordResetErrorCode.INVALID_TOKEN,
+                    message="Invalid or expired token."
                 )
+                return self._convert_error_to_result(error_result)
             
             # Get user
             user = User.query.get(token_instance.user_id)
@@ -304,14 +333,14 @@ class PasswordResetService:
             )
             
         except Exception as e:
-            error_msg = f"Error during token validation: {str(e)}"
-            self.logger.error(error_msg)
-            return PasswordResetResult(
-                success=False,
-                message="An error occurred during validation.",
-                error_code="INTERNAL_ERROR"
+            error_result = password_reset_error_handler_instance.handle_service_error(
+                error=e,
+                operation="token_validation",
+                error_code=PasswordResetErrorCode.INTERNAL_ERROR
             )
+            return self._convert_error_to_result(error_result)
 
+    @password_reset_error_handler('password_reset_verify')
     def reset_password(self, token: str, new_password: str) -> PasswordResetResult:
         """
         Reset user password using a valid token.
@@ -328,27 +357,29 @@ class PasswordResetService:
             
             # Validate inputs
             if not token or not new_password:
-                return PasswordResetResult(
-                    success=False,
+                error_result = password_reset_error_handler_instance.handle_validation_error(
+                    error_code=PasswordResetErrorCode.MISSING_TOKEN if not token else PasswordResetErrorCode.MISSING_PASSWORD,
                     message="Invalid token or password.",
-                    error_code="INVALID_INPUT"
+                    operation="password_reset_verify"
                 )
+                return self._convert_error_to_result(error_result)
             
             if len(new_password) < 8:
-                return PasswordResetResult(
-                    success=False,
+                error_result = password_reset_error_handler_instance.handle_validation_error(
+                    error_code=PasswordResetErrorCode.WEAK_PASSWORD,
                     message="Password must be at least 8 characters long.",
-                    error_code="WEAK_PASSWORD"
+                    operation="password_reset_verify"
                 )
+                return self._convert_error_to_result(error_result)
             
             # Verify and consume token
             token_instance = PasswordResetToken.verify_token(token)
             if not token_instance:
-                return PasswordResetResult(
-                    success=False,
-                    message="Invalid or expired token.",
-                    error_code="INVALID_TOKEN"
+                error_result = password_reset_error_handler_instance.handle_token_error(
+                    error_code=PasswordResetErrorCode.INVALID_TOKEN,
+                    message="Invalid or expired token."
                 )
+                return self._convert_error_to_result(error_result)
             
             # Get user
             user = User.query.get(token_instance.user_id)
@@ -384,13 +415,13 @@ class PasswordResetService:
             
         except Exception as e:
             db.session.rollback()
-            error_msg = f"Error during password reset: {str(e)}"
-            self.logger.error(error_msg)
-            return PasswordResetResult(
-                success=False,
-                message="An error occurred during password reset.",
-                error_code="INTERNAL_ERROR"
+            error_result = password_reset_error_handler_instance.handle_service_error(
+                error=e,
+                operation="password_reset_verify",
+                user_id=user.id if 'user' in locals() else None,
+                error_code=PasswordResetErrorCode.INTERNAL_ERROR
             )
+            return self._convert_error_to_result(error_result)
 
     def cleanup_expired_tokens(self) -> int:
         """

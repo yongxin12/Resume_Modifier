@@ -109,6 +109,199 @@ POST /api/login
 
 ---
 
+### Password Recovery Endpoints
+
+#### Request Password Reset
+```http
+POST /api/auth/password-reset/request
+```
+
+**Description:** Request a password reset email. This endpoint validates the email and sends a secure reset link if the user exists. Rate limited to prevent abuse.
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+**Response (User Exists):**
+```json
+{
+  "success": true,
+  "message": "If an account with that email exists, a password reset email will be sent."
+}
+```
+
+**Response (User Not Found):**
+```json
+{
+  "success": true,
+  "message": "If an account with that email exists, a password reset email will be sent."
+}
+```
+
+**Security Features:**
+- Rate limiting: 5 requests per hour per user, 10 per hour per IP address
+- Consistent response messages for security (no user enumeration)
+- Automatic revocation of previous reset tokens
+- Security event logging for monitoring
+
+**Status Codes:**
+- `200`: Request processed (response message is always the same for security)
+- `400`: Invalid email format or missing email
+- `429`: Rate limit exceeded
+- `500`: Internal server error
+
+**Rate Limiting Response:**
+```json
+{
+  "error": "Rate limit exceeded. Please try again later.",
+  "details": "Too many password reset requests. Please wait before trying again.",
+  "retry_after": 3600
+}
+```
+
+---
+
+#### Validate Reset Token
+```http
+GET /api/auth/password-reset/validate
+```
+
+**Description:** Validate a password reset token without consuming it. Used to check if a reset link is still valid before showing the reset form.
+
+**Query Parameters:**
+- `token` (required): The reset token from the email link
+
+**Request:**
+```http
+GET /api/auth/password-reset/validate?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+**Response (Valid Token):**
+```json
+{
+  "valid": true,
+  "message": "Token is valid",
+  "expires_in_minutes": 45
+}
+```
+
+**Response (Invalid/Expired Token):**
+```json
+{
+  "valid": false,
+  "message": "Token is invalid or expired"
+}
+```
+
+**Status Codes:**
+- `200`: Token validation completed (check `valid` field)
+- `400`: Missing token parameter
+- `500`: Internal server error
+
+---
+
+#### Reset Password
+```http
+POST /api/auth/password-reset/verify
+```
+
+**Description:** Complete the password reset process by providing a valid token and new password. This endpoint consumes the token and updates the user's password.
+
+**Request Body:**
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "new_password": "NewSecurePassword123!"
+}
+```
+
+**Response (Success):**
+```json
+{
+  "success": true,
+  "message": "Password reset successfully"
+}
+```
+
+**Response (Invalid Token):**
+```json
+{
+  "success": false,
+  "message": "Invalid or expired reset token"
+}
+```
+
+**Response (Weak Password):**
+```json
+{
+  "success": false,
+  "message": "Password does not meet security requirements",
+  "details": "Password must be at least 8 characters long and contain uppercase, lowercase, number, and special character"
+}
+```
+
+**Security Features:**
+- Token is consumed after use (one-time use only)
+- All user's existing reset tokens are revoked after successful reset
+- Password strength validation
+- Security event logging
+- Automatic cleanup of expired tokens
+
+**Status Codes:**
+- `200`: Password reset successful
+- `400`: Invalid token, missing fields, or weak password
+- `500`: Internal server error
+
+---
+
+### Password Recovery Security
+
+**Token Security:**
+- Tokens are 64-character secure random strings
+- SHA-512 hashing with salt for storage
+- 24-hour expiration time
+- One-time use only (consumed after successful reset)
+- Automatic cleanup of expired tokens
+
+**Rate Limiting:**
+- 5 password reset requests per hour per user email
+- 10 password reset requests per hour per IP address
+- Tracking includes user agent and IP for additional security
+
+**Email Security:**
+- Professional HTML and text email templates
+- Secure reset links with HTTPS enforcement
+- Clear security warnings and instructions
+- No sensitive information exposed in emails
+
+**Audit Logging:**
+- All password reset events are logged with timestamps
+- Security events include IP address, user agent, and outcome
+- Failed attempts and rate limiting violations are tracked
+- Logs are structured for security monitoring and analysis
+
+**Password Requirements:**
+- Minimum 8 characters length
+- Must contain uppercase letter
+- Must contain lowercase letter
+- Must contain number
+- Must contain special character
+
+**Example Email Template:**
+
+The password reset email includes:
+- Professional branding and formatting
+- Secure reset link with embedded token
+- Clear expiration time (24 hours)
+- Security warnings about legitimate requests
+- Instructions for reporting suspicious activity
+- HTML and plain text versions for compatibility
+
+---
+
 ### Resume Processing Endpoints
 
 #### Upload PDF Resume
@@ -512,8 +705,62 @@ Common error status codes:
 - `400`: Bad Request - Invalid input data
 - `401`: Unauthorized - Authentication required or failed
 - `404`: Not Found - Resource not found
+- `429`: Too Many Requests - Rate limit exceeded
 - `500`: Internal Server Error - Server-side error
 - `503`: Service Unavailable - Service is down or unhealthy
+
+### Password Recovery Error Codes
+
+The password recovery system uses structured error codes for better error handling and monitoring:
+
+**Authentication & Authorization (AUTH_xxx):**
+- `AUTH_TOKEN_MISSING`: Authentication token not provided
+- `AUTH_TOKEN_INVALID`: Authentication token is invalid or malformed
+- `AUTH_TOKEN_EXPIRED`: Authentication token has expired
+- `AUTH_ACCESS_DENIED`: Access denied to the requested resource
+
+**Email & Communication (EMAIL_xxx):**
+- `EMAIL_INVALID_FORMAT`: Email address format is invalid
+- `EMAIL_SEND_FAILED`: Failed to send email (SMTP or service error)
+- `EMAIL_CONFIG_ERROR`: Email service configuration error
+- `EMAIL_TEMPLATE_ERROR`: Email template rendering failed
+
+**Rate Limiting (RATE_xxx):**
+- `RATE_LIMIT_USER_EXCEEDED`: User-specific rate limit exceeded
+- `RATE_LIMIT_IP_EXCEEDED`: IP address rate limit exceeded
+- `RATE_LIMIT_GLOBAL_EXCEEDED`: Global rate limit exceeded
+
+**Token Management (TOKEN_xxx):**
+- `TOKEN_INVALID`: Reset token is invalid or malformed
+- `TOKEN_EXPIRED`: Reset token has expired
+- `TOKEN_ALREADY_USED`: Reset token has already been consumed
+- `TOKEN_NOT_FOUND`: Reset token does not exist in database
+- `TOKEN_GENERATION_FAILED`: Failed to generate reset token
+
+**Password Validation (PASSWORD_xxx):**
+- `PASSWORD_TOO_SHORT`: Password is shorter than minimum length
+- `PASSWORD_MISSING_UPPERCASE`: Password lacks uppercase characters
+- `PASSWORD_MISSING_LOWERCASE`: Password lacks lowercase characters
+- `PASSWORD_MISSING_NUMBERS`: Password lacks numeric characters
+- `PASSWORD_MISSING_SPECIAL`: Password lacks special characters
+- `PASSWORD_UPDATE_FAILED`: Failed to update password in database
+
+**User Management (USER_xxx):**
+- `USER_NOT_FOUND`: User account does not exist
+- `USER_INACTIVE`: User account is inactive or disabled
+- `USER_LOOKUP_FAILED`: Failed to retrieve user information
+
+**Database Operations (DB_xxx):**
+- `DB_CONNECTION_FAILED`: Database connection error
+- `DB_QUERY_FAILED`: Database query execution failed
+- `DB_TRANSACTION_FAILED`: Database transaction rollback occurred
+- `DB_CONSTRAINT_VIOLATION`: Database constraint violation
+
+**System & Infrastructure (SYSTEM_xxx):**
+- `SYSTEM_MAINTENANCE`: System is under maintenance
+- `SYSTEM_OVERLOAD`: System is experiencing high load
+- `SYSTEM_CONFIG_ERROR`: System configuration error
+- `SYSTEM_DEPENDENCY_FAILED`: External dependency failure
 
 ---
 
@@ -553,7 +800,44 @@ JWT_SECRET=your-jwt-secret-key
 FLASK_APP=app.server
 FLASK_ENV=development
 FLASK_DEBUG=1
+
+# Email Configuration (Password Recovery)
+MAIL_SERVER=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USE_TLS=True
+MAIL_USE_SSL=False
+MAIL_USERNAME=your-email@gmail.com
+MAIL_PASSWORD=your-app-password
+MAIL_DEFAULT_SENDER=your-email@gmail.com
+
+# Password Recovery Security
+PASSWORD_RESET_TOKEN_EXPIRY_HOURS=24
+PASSWORD_RESET_RATE_LIMIT_USER=5
+PASSWORD_RESET_RATE_LIMIT_IP=10
+PASSWORD_RESET_CLEANUP_INTERVAL_HOURS=6
+
+# Application Settings
+FRONTEND_URL=http://localhost:3000
+APP_NAME=Resume Editor
 ```
+
+### Email Configuration Details
+
+**Gmail Setup (Recommended):**
+1. Enable 2-factor authentication on your Gmail account
+2. Generate an App Password: Google Account → Security → App passwords
+3. Use the App Password as `MAIL_PASSWORD` (not your regular password)
+
+**Other SMTP Providers:**
+- **Outlook/Hotmail:** smtp-mail.outlook.com:587
+- **Yahoo:** smtp.mail.yahoo.com:587  
+- **Custom SMTP:** Configure according to your provider
+
+**Security Notes:**
+- Never commit email credentials to version control
+- Use environment variables or secure secret management
+- Consider using dedicated email service accounts
+- Monitor email sending rates and limits
 
 ---
 
@@ -592,6 +876,47 @@ This will test:
 - Health check endpoint
 - Resume scoring functionality
 - Authentication (register/login)
+
+### Password Recovery Testing
+
+The password recovery system includes comprehensive tests:
+
+```bash
+# Run all password recovery tests
+python -m pytest app/tests/test_password_reset.py -v
+
+# Run specific test categories
+python -m pytest app/tests/test_password_reset.py::TestPasswordResetRequest -v
+python -m pytest app/tests/test_password_reset.py::TestPasswordResetValidation -v
+python -m pytest app/tests/test_password_reset.py::TestPasswordResetVerification -v
+python -m pytest app/tests/test_password_reset.py::TestPasswordResetIntegration -v
+```
+
+**Test Coverage:**
+- ✅ Email validation and error handling
+- ✅ Rate limiting (user and IP-based)
+- ✅ Token generation, validation, and expiration
+- ✅ Password strength requirements
+- ✅ Security event logging
+- ✅ Complete end-to-end workflow
+- ✅ Edge cases and error scenarios
+
+**Manual Testing with curl:**
+
+```bash
+# 1. Request password reset
+curl -X POST http://localhost:5001/api/auth/password-reset/request \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com"}'
+
+# 2. Validate reset token (get token from email)
+curl -X GET "http://localhost:5001/api/auth/password-reset/validate?token=YOUR_TOKEN_HERE"
+
+# 3. Reset password
+curl -X POST http://localhost:5001/api/auth/password-reset/verify \
+  -H "Content-Type: application/json" \
+  -d '{"token": "YOUR_TOKEN_HERE", "new_password": "NewPassword123!"}'
+```
 
 ---
 
