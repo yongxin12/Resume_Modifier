@@ -54,9 +54,9 @@ def create_app(config=None):
     # This ensures they are registered with Flask-SQLAlchemy
     with app.app_context():
         # Import models and explicitly register them with Flask-SQLAlchemy
-        from app.models.temp import User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite
+        from app.models.temp import User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite, PasswordResetToken
         # Make sure the models are registered with db.metadata
-        for model in [User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite]:
+        for model in [User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite, PasswordResetToken]:
             if hasattr(model, '__table__'):
                 if model.__table__.name not in db.metadata.tables:
                     db.metadata.tables[model.__table__.name] = model.__table__
@@ -66,6 +66,10 @@ def create_app(config=None):
     
     # Initialize login manager
     login_manager.init_app(app)
+    
+    # Initialize email service
+    from app.services.email_service import email_service
+    email_service.init_app(app)
     
     # Register blueprints
     from app.server import api

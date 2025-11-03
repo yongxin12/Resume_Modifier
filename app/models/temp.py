@@ -3,8 +3,10 @@ from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy 
 from flask import Flask
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
+import hashlib
+import secrets
 
 
 
@@ -239,3 +241,172 @@ class ResumeFile(db.Model):
     
     def __repr__(self):
         return f'<ResumeFile {self.original_filename} (User: {self.user_id})>'
+
+
+class PasswordResetToken(db.Model):
+    """Model for managing password reset tokens with enhanced security."""
+    __tablename__ = 'password_reset_tokens'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    token_hash = db.Column(db.String(128), nullable=False, unique=True)  # SHA-512 hash of the token
+    expires_at = db.Column(db.DateTime, nullable=False)  # Token expiration time
+    is_used = db.Column(db.Boolean, default=False, nullable=False)  # Whether token has been used
+    ip_address = db.Column(db.String(45), nullable=True)  # IP address of requester (IPv6 compatible)
+    user_agent = db.Column(db.String(500), nullable=True)  # User agent string for security tracking
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    used_at = db.Column(db.DateTime, nullable=True)  # When token was used
+    
+    # Relationships
+    user = db.relationship('User', backref='password_reset_tokens', lazy=True)
+    
+    # Database constraints and indexes
+    __table_args__ = (
+        db.Index('idx_password_reset_user_created', 'user_id', 'created_at'),
+        db.Index('idx_password_reset_token_hash', 'token_hash'),
+        db.Index('idx_password_reset_expires_at', 'expires_at'),
+        db.Index('idx_password_reset_is_used', 'is_used'),
+    )
+    
+    @staticmethod
+    def generate_token() -> str:
+        """Generate a cryptographically secure random token."""
+        return secrets.token_urlsafe(32)  # 256-bit entropy, URL-safe base64
+    
+    @staticmethod
+    def hash_token(token: str) -> str:
+        """Create SHA-512 hash of the token for secure storage."""
+        return hashlib.sha512(token.encode('utf-8')).hexdigest()
+    
+    @classmethod
+    def create_token(cls, user_id: int, ip_address: str = None, user_agent: str = None, 
+                     expiry_hours: int = 1) -> tuple:
+        """
+        Create a new password reset token for a user.
+        
+        Args:
+            user_id: ID of the user requesting password reset
+            ip_address: IP address of the requester
+            user_agent: User agent string of the requester
+            expiry_hours: Hours until token expires (default: 1 hour)
+            
+        Returns:
+            tuple: (token_instance, raw_token) - token instance and unhashed token string
+        """
+        raw_token = cls.generate_token()
+        token_hash = cls.hash_token(raw_token)
+        expires_at = datetime.utcnow() + timedelta(hours=expiry_hours)
+        
+        token_instance = cls(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            ip_address=ip_address[:45] if ip_address else None,  # Truncate if too long
+            user_agent=user_agent[:500] if user_agent else None  # Truncate if too long
+        )
+        
+        return token_instance, raw_token
+    
+    def is_valid(self) -> bool:
+        """Check if token is valid (not used and not expired)."""
+        return not self.is_used and datetime.utcnow() < self.expires_at
+    
+    def is_expired(self) -> bool:
+        """Check if token has expired."""
+        return datetime.utcnow() >= self.expires_at
+    
+    def mark_used(self) -> None:
+        """Mark token as used."""
+        self.is_used = True
+        self.used_at = datetime.utcnow()
+    
+    @classmethod
+    def verify_token(cls, raw_token: str):
+        """
+        Verify a raw token and return the token instance if valid.
+        
+        Args:
+            raw_token: The unhashed token string to verify
+            
+        Returns:
+            PasswordResetToken or None: Token instance if valid, None otherwise
+        """
+        if not raw_token:
+            return None
+            
+        token_hash = cls.hash_token(raw_token)
+        token = cls.query.filter_by(token_hash=token_hash).first()
+        
+        if token and token.is_valid():
+            return token
+        return None
+    
+    @classmethod
+    def cleanup_expired_tokens(cls) -> int:
+        """
+        Remove expired tokens from database.
+        
+        Returns:
+            int: Number of tokens deleted
+        """
+        expired_tokens = cls.query.filter(cls.expires_at < datetime.utcnow()).all()
+        count = len(expired_tokens)
+        
+        for token in expired_tokens:
+            db.session.delete(token)
+        
+        return count
+    
+    @classmethod
+    def get_active_tokens_for_user(cls, user_id: int):
+        """
+        Get all active (non-used, non-expired) tokens for a user.
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            list: List of active PasswordResetToken instances
+        """
+        return cls.query.filter(
+            cls.user_id == user_id,
+            cls.is_used == False,
+            cls.expires_at > datetime.utcnow()
+        ).all()
+    
+    @classmethod
+    def revoke_all_user_tokens(cls, user_id: int) -> int:
+        """
+        Revoke all active tokens for a user by marking them as used.
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            int: Number of tokens revoked
+        """
+        active_tokens = cls.get_active_tokens_for_user(user_id)
+        count = len(active_tokens)
+        
+        for token in active_tokens:
+            token.mark_used()
+        
+        return count
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert model instance to dictionary for JSON serialization."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'is_used': self.is_used,
+            'ip_address': self.ip_address,
+            'user_agent': self.user_agent,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'used_at': self.used_at.isoformat() if self.used_at else None,
+            'is_valid': self.is_valid(),
+            'is_expired': self.is_expired()
+        }
+    
+    def __repr__(self):
+        return f'<PasswordResetToken {self.id} (User: {self.user_id}, Valid: {self.is_valid()})>'
