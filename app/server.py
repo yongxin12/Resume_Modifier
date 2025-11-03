@@ -2169,6 +2169,382 @@ def login():
     }), 200
 
 
+# Password Reset Routes
+@api.route('/api/auth/password-reset/request', methods=['POST'])
+def request_password_reset():
+    """
+    Request password reset via email
+    ---
+    tags:
+      - Authentication
+    summary: Request a password reset token
+    description: |
+      Send a password reset email to the user if the email exists in the system.
+      For security reasons, the response will be the same whether the email exists or not.
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+          properties:
+            email:
+              type: string
+              format: email
+              description: Email address of the user requesting password reset
+              example: user@example.com
+    responses:
+      200:
+        description: Password reset request processed
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success
+            message:
+              type: string
+              example: If an account with this email exists, you will receive a password reset link.
+      400:
+        description: Invalid request data
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: Email is required
+      429:
+        description: Rate limit exceeded
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: Too many password reset requests. Please wait before trying again.
+      500:
+        description: Internal server error
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: An error occurred. Please try again later.
+    """
+    from app.services.password_reset_service import password_reset_service
+    
+    try:
+        data = request.get_json()
+        
+        # Validate input
+        if not data or 'email' not in data:
+            return jsonify({
+                "status": "error",
+                "message": "Email is required"
+            }), 400
+        
+        email = data['email'].strip()
+        if not email:
+            return jsonify({
+                "status": "error",
+                "message": "Email is required"
+            }), 400
+        
+        # Process password reset request
+        result = password_reset_service.request_password_reset(email)
+        
+        if result.rate_limited:
+            return jsonify({
+                "status": "error",
+                "message": result.message
+            }), 429
+        
+        if not result.success and result.error_code == "EMAIL_FAILED":
+            return jsonify({
+                "status": "error",
+                "message": result.message
+            }), 500
+        
+        # Always return success response for security
+        return jsonify({
+            "status": "success",
+            "message": result.message
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Password reset request error: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "An error occurred. Please try again later."
+        }), 500
+
+
+@api.route('/api/auth/password-reset/verify', methods=['POST'])
+def verify_password_reset():
+    """
+    Reset password using a valid token
+    ---
+    tags:
+      - Authentication
+    summary: Reset user password with token
+    description: |
+      Reset the user's password using a valid password reset token.
+      The token will be invalidated after successful password reset.
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - token
+            - password
+          properties:
+            token:
+              type: string
+              description: Password reset token received via email
+              example: abc123def456
+            password:
+              type: string
+              format: password
+              description: New password (minimum 8 characters)
+              example: newPassword123
+    responses:
+      200:
+        description: Password reset successful
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success
+            message:
+              type: string
+              example: Password has been reset successfully.
+      400:
+        description: Invalid request data or weak password
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: Password must be at least 8 characters long.
+      401:
+        description: Invalid or expired token
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: Invalid or expired token.
+      500:
+        description: Internal server error
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: An error occurred during password reset.
+    """
+    from app.services.password_reset_service import password_reset_service
+    
+    try:
+        data = request.get_json()
+        
+        # Validate input
+        if not data or 'token' not in data or 'password' not in data:
+            return jsonify({
+                "status": "error",
+                "message": "Token and password are required"
+            }), 400
+        
+        token = data['token'].strip()
+        password = data['password']
+        
+        if not token or not password:
+            return jsonify({
+                "status": "error",
+                "message": "Token and password are required"
+            }), 400
+        
+        # Process password reset
+        result = password_reset_service.reset_password(token, password)
+        
+        if result.error_code == "INVALID_TOKEN":
+            return jsonify({
+                "status": "error",
+                "message": result.message
+            }), 401
+        
+        if result.error_code == "WEAK_PASSWORD":
+            return jsonify({
+                "status": "error",
+                "message": result.message
+            }), 400
+        
+        if not result.success:
+            return jsonify({
+                "status": "error",
+                "message": result.message
+            }), 500
+        
+        return jsonify({
+            "status": "success",
+            "message": result.message
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Password reset verify error: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "An error occurred during password reset."
+        }), 500
+
+
+@api.route('/api/auth/password-reset/validate', methods=['GET'])
+def validate_password_reset_token():
+    """
+    Validate a password reset token
+    ---
+    tags:
+      - Authentication
+    summary: Check if a password reset token is valid
+    description: |
+      Validate a password reset token without consuming it.
+      This can be used to check if a token is valid before showing the password reset form.
+    parameters:
+      - name: token
+        in: query
+        type: string
+        required: true
+        description: Password reset token to validate
+        example: abc123def456
+    responses:
+      200:
+        description: Token validation result
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: success
+            message:
+              type: string
+              example: Token is valid.
+            valid:
+              type: boolean
+              example: true
+            expires_at:
+              type: string
+              format: date-time
+              example: 2024-11-03T09:00:00Z
+      400:
+        description: Missing token parameter
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: Token parameter is required
+            valid:
+              type: boolean
+              example: false
+      401:
+        description: Invalid or expired token
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: Invalid or expired token.
+            valid:
+              type: boolean
+              example: false
+      500:
+        description: Internal server error
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: error
+            message:
+              type: string
+              example: An error occurred during validation.
+            valid:
+              type: boolean
+              example: false
+    """
+    from app.services.password_reset_service import password_reset_service
+    
+    try:
+        token = request.args.get('token')
+        
+        if not token:
+            return jsonify({
+                "status": "error",
+                "message": "Token parameter is required",
+                "valid": False
+            }), 400
+        
+        # Validate token
+        result = password_reset_service.validate_reset_token(token)
+        
+        if result.error_code == "INVALID_TOKEN":
+            return jsonify({
+                "status": "error",
+                "message": result.message,
+                "valid": False
+            }), 401
+        
+        if not result.success:
+            return jsonify({
+                "status": "error",
+                "message": result.message,
+                "valid": False
+            }), 500
+        
+        return jsonify({
+            "status": "success",
+            "message": result.message,
+            "valid": True,
+            "expires_at": result.expires_at.isoformat() if result.expires_at else None
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Password reset validate error: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "An error occurred during validation.",
+            "valid": False
+        }), 500
+
+
 # Google OAuth Routes
 @api.route('/auth/google', methods=['GET'])
 def google_auth():

@@ -180,19 +180,20 @@ This email was sent from {{ request_ip }} at {{ timestamp }}.
             }
         }
 
-    def validate_email_address(self, email: str) -> bool:
+    def validate_email_address(self, email: str, check_deliverability: bool = False) -> bool:
         """
-        Validate email address format and deliverability.
+        Validate email address format and optionally deliverability.
         
         Args:
             email: Email address to validate
+            check_deliverability: Whether to check if domain accepts email (default: False)
             
         Returns:
             bool: True if email is valid, False otherwise
         """
         try:
-            # Validate email format and check deliverability
-            valid = validate_email(email, check_deliverability=True)
+            # Validate email format and optionally check deliverability
+            valid = validate_email(email, check_deliverability=check_deliverability)
             return True
         except EmailNotValidError as e:
             self.logger.warning(f"Invalid email address {email}: {e}")
@@ -231,7 +232,7 @@ This email was sent from {{ request_ip }} at {{ timestamp }}.
             # Validate recipient email(s)
             recipients = [to_email] if isinstance(to_email, str) else to_email
             for email in recipients:
-                if not self.validate_email_address(email):
+                if not self.validate_email_address(email, check_deliverability=False):
                     raise EmailError(f"Invalid recipient email: {email}")
 
             # Create message
