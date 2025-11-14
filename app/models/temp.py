@@ -3,7 +3,8 @@ from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy 
 from flask import Flask
-from datetime import datetime, timedelta
+from datetime import datetime
+import os, timedelta
 import os
 import hashlib
 import secrets
@@ -177,32 +178,61 @@ class ResumeFile(db.Model):
     storage_type = db.Column(db.String(50), nullable=False, default='local')  # 'local' or 's3'
     file_path = db.Column(db.String(500), nullable=False)  # Local path or S3 key
     s3_bucket = db.Column(db.String(100), nullable=True)  # S3 bucket name if using S3
-    file_hash = db.Column(db.String(64), nullable=False, unique=True)  # SHA-256 hash for deduplication
+    file_hash = db.Column(db.String(64), nullable=False)  # SHA-256 hash (removed unique constraint)
+    
+    # Google Drive Integration Fields
+    google_drive_file_id = db.Column(db.String(100), nullable=True)  # Google Drive file ID
+    google_doc_id = db.Column(db.String(100), nullable=True)  # Google Doc ID (if converted)
+    google_drive_link = db.Column(db.String(500), nullable=True)  # Direct link to Google Drive file
+    google_doc_link = db.Column(db.String(500), nullable=True)  # Direct link to Google Doc
+    is_shared_with_user = db.Column(db.Boolean, default=False)  # Whether shared with user
+    
+    # Processing and Content Fields
     is_processed = db.Column(db.Boolean, default=False)  # Whether file has been processed for text extraction
     extracted_text = db.Column(db.Text, nullable=True)  # Extracted text content
     processing_status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
     processing_error = db.Column(db.Text, nullable=True)  # Error message if processing failed
+    
+    # Duplicate Handling Fields
+    is_duplicate = db.Column(db.Boolean, default=False)  # Whether this is a duplicate file
+    duplicate_sequence = db.Column(db.Integer, default=0)  # Sequence number for duplicates (0 = original)
+    original_file_id = db.Column(db.Integer, db.ForeignKey('resume_files.id'), nullable=True)  # Reference to original file
+    
+    # Soft Deletion and Metadata
+    is_active = db.Column(db.Boolean, default=True)  # For soft delete functionality
+    deleted_at = db.Column(db.DateTime, nullable=True)  # Timestamp when soft deleted
+    deleted_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who deleted it
     tags = db.Column(db.JSON, nullable=True, default=list)  # User-defined tags
-    is_active = db.Column(db.Boolean, default=True)  # For soft delete
+    
+    # Timestamps
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    user = db.relationship('User', back_populates='resume_files')
+    user = db.relationship('User', foreign_keys=[user_id], back_populates='resume_files')
+    deleted_by_user = db.relationship('User', foreign_keys=[deleted_by])
+    original_file = db.relationship('ResumeFile', remote_side=[id], backref='duplicates')
     
-    # Constraints
+    # Constraints and Indexes
     __table_args__ = (
         db.CheckConstraint('file_size > 0', name='check_positive_file_size'),
         db.CheckConstraint("storage_type in ('local', 's3')", name='check_valid_storage_type'),
         db.CheckConstraint("processing_status in ('pending', 'processing', 'completed', 'failed')", name='check_valid_processing_status'),
+        db.CheckConstraint('duplicate_sequence >= 0', name='check_positive_duplicate_sequence'),
         db.Index('idx_user_created', 'user_id', 'created_at'),
         db.Index('idx_processing_status', 'processing_status'),
         db.Index('idx_active_files', 'is_active'),
+        db.Index('idx_file_hash', 'file_hash'),  # For duplicate detection
+        db.Index('idx_user_hash', 'user_id', 'file_hash'),  # For user-specific duplicate detection
+        db.Index('idx_google_drive_file', 'google_drive_file_id'),
+        db.Index('idx_google_doc', 'google_doc_id'),
+        db.Index('idx_duplicates', 'original_file_id', 'duplicate_sequence'),
+        db.Index('idx_deleted_files', 'is_active', 'deleted_at'),
     )
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_google_drive=True, include_duplicates=True) -> Dict[str, Any]:
         """Convert model instance to dictionary for JSON serialization."""
-        return {
+        result = {
             'id': self.id,
             'user_id': self.user_id,
             'original_filename': self.original_filename,
@@ -223,6 +253,33 @@ class ResumeFile(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+        
+        # Add Google Drive information if requested
+        if include_google_drive:
+            result['google_drive'] = {
+                'file_id': self.google_drive_file_id,
+                'doc_id': self.google_doc_id,
+                'drive_link': self.google_drive_link,
+                'doc_link': self.google_doc_link,
+                'is_shared': self.is_shared_with_user
+            }
+        
+        # Add duplicate information if requested
+        if include_duplicates:
+            result['duplicate_info'] = {
+                'is_duplicate': self.is_duplicate,
+                'duplicate_sequence': self.duplicate_sequence,
+                'original_file_id': self.original_file_id
+            }
+        
+        # Add soft deletion information if file is deleted
+        if not self.is_active:
+            result['deletion_info'] = {
+                'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
+                'deleted_by': self.deleted_by
+            }
+            
+        return result
     
     def format_file_size(self) -> str:
         """Format file size in human-readable format."""
@@ -238,6 +295,60 @@ class ResumeFile(db.Model):
                     return f"{size:.1f} {unit}"
             size /= 1024.0
         return f"{size:.1f} TB"
+    
+    def get_display_filename(self) -> str:
+        """Get the filename for display to users, including duplicate notation."""
+        if not self.is_duplicate or self.duplicate_sequence == 0:
+            return self.original_filename
+        
+        # Split filename and extension
+        name, ext = os.path.splitext(self.original_filename)
+        return f"{name} ({self.duplicate_sequence}){ext}"
+    
+    def soft_delete(self, deleted_by_user_id: int):
+        """Mark file as soft deleted."""
+        self.is_active = False
+        self.deleted_at = datetime.utcnow()
+        self.deleted_by = deleted_by_user_id
+    
+    def restore(self):
+        """Restore soft deleted file."""
+        self.is_active = True
+        self.deleted_at = None
+        self.deleted_by = None
+    
+    def is_google_drive_synced(self) -> bool:
+        """Check if file is synced with Google Drive."""
+        return self.google_drive_file_id is not None
+    
+    def is_google_doc_available(self) -> bool:
+        """Check if Google Doc version is available."""
+        return self.google_doc_id is not None
+    
+    @classmethod
+    def find_duplicates_by_hash(cls, user_id: int, file_hash: str):
+        """Find all files with the same hash for a user."""
+        return cls.query.filter_by(
+            user_id=user_id,
+            file_hash=file_hash,
+            is_active=True
+        ).all()
+    
+    @classmethod
+    def get_active_files(cls, user_id: int):
+        """Get all active (non-deleted) files for a user."""
+        return cls.query.filter_by(
+            user_id=user_id,
+            is_active=True
+        )
+    
+    @classmethod
+    def get_deleted_files(cls, user_id: int = None):
+        """Get all soft-deleted files, optionally filtered by user."""
+        query = cls.query.filter_by(is_active=False)
+        if user_id:
+            query = query.filter_by(user_id=user_id)
+        return query
     
     def __repr__(self):
         return f'<ResumeFile {self.original_filename} (User: {self.user_id})>'
