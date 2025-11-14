@@ -10,6 +10,7 @@ from app.services.template_service import TemplateService
 from app.services.google_auth import GoogleAuthService
 from app.services.google_docs_service import GoogleDocsService
 from app.services.google_drive_service import GoogleDriveService
+from app.services.duplicate_file_handler import DuplicateFileHandler
 from app.services.pdf_generator import PDFGenerator
 from app.response_template.resume_schema import RESUME_TEMPLATE
 from app.models.temp import User, Resume, JobDescription, GoogleAuth, ResumeTemplate, GeneratedDocument, ResumeFile
@@ -493,7 +494,7 @@ def process_feedback():
 @token_required
 def upload_file():
     """
-    Upload a resume file (PDF or DOCX)
+    Upload a resume file (PDF or DOCX) with duplicate detection and Google Drive integration
     ---
     tags:
       - File Management
@@ -516,9 +517,27 @@ def upload_file():
         type: boolean
         default: true
         description: Whether to process file content (extract text)
+      - name: google_drive
+        in: query
+        required: false
+        type: boolean
+        default: true
+        description: Whether to upload to Google Drive
+      - name: convert_to_doc
+        in: query
+        required: false
+        type: boolean
+        default: true
+        description: Whether to convert to Google Doc (requires google_drive=true)
+      - name: share_with_user
+        in: query
+        required: false
+        type: boolean
+        default: true
+        description: Whether to share Google Drive files with user (requires google_drive=true)
     responses:
       201:
-        description: File uploaded successfully
+        description: File uploaded successfully with duplicate and Google Drive information
         schema:
           type: object
           properties:
@@ -528,6 +547,9 @@ def upload_file():
             message:
               type: string
               example: "File uploaded successfully"
+            duplicate_notification:
+              type: string
+              example: "Duplicate file detected. Saved as 'Resume (1).pdf' to avoid conflicts."
             file:
               type: object
               properties:
@@ -540,15 +562,18 @@ def upload_file():
                 original_filename:
                   type: string
                   example: "resume.pdf"
-                sanitized_filename:
+                display_filename:
+                  type: string
+                  example: "Resume (1).pdf"
+                stored_filename:
                   type: string
                   example: "secure_resume_20241025.pdf"
                 file_size:
                   type: integer
                   example: 245760
-                file_type:
+                mime_type:
                   type: string
-                  example: "pdf"
+                  example: "application/pdf"
                 storage_type:
                   type: string
                   example: "local"
@@ -561,24 +586,41 @@ def upload_file():
                 extracted_text:
                   type: string
                   example: "Resume content..."
-                metadata:
+                processing_status:
+                  type: string
+                  example: "completed"
+                duplicate_info:
                   type: object
-                  example: {"word_count": 250, "page_count": 2}
+                  properties:
+                    is_duplicate:
+                      type: boolean
+                      example: true
+                    duplicate_sequence:
+                      type: integer
+                      example: 1
+                    original_file_id:
+                      type: integer
+                      example: 122
+                google_drive:
+                  type: object
+                  properties:
+                    file_id:
+                      type: string
+                      example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                    doc_id:
+                      type: string
+                      example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                    drive_link:
+                      type: string 
+                      example: "https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view"
+                    doc_link:
+                      type: string
+                      example: "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+                    is_shared:
+                      type: boolean
+                      example: true
       400:
         description: Invalid request or validation failed
-        schema:
-          type: object
-          properties:
-            success:
-              type: boolean
-              example: false
-            message:
-              type: string
-              example: "File validation failed"
-            errors:
-              type: array
-              items:
-                type: string
       401:
         description: Authentication required
       500:
@@ -587,6 +629,12 @@ def upload_file():
     try:
         # Get current user from token
         current_user_id = request.user['user_id']
+        current_user_email = request.user.get('email', '')
+        
+        # Get Google Drive options from query parameters
+        upload_to_google_drive = request.args.get('google_drive', 'false').lower() == 'true'
+        convert_to_doc = request.args.get('convert_to_doc', 'true').lower() == 'true'
+        share_with_user = request.args.get('share_with_user', 'true').lower() == 'true'
         
         # Check if file is provided
         if 'file' not in request.files:
@@ -609,6 +657,7 @@ def upload_file():
         
         # Initialize services
         file_validator = FileValidator()
+        duplicate_handler = DuplicateFileHandler()
         
         # Get centralized storage configuration
         from app.utils.storage_config import StorageConfigManager
@@ -632,11 +681,20 @@ def upload_file():
                 'errors': validation_result.errors
             }), 400
         
-        # Upload file to storage
+        # Process duplicate file detection
+        uploaded_file.seek(0)  # Reset file pointer
+        duplicate_result = duplicate_handler.process_duplicate_file(
+            uploaded_file, 
+            current_user_id, 
+            uploaded_file.filename
+        )
+        
+        # Upload file to storage using the display filename from duplicate processing
+        uploaded_file.seek(0)  # Reset file pointer
         storage_result = file_storage_service.upload_file(
             file_storage=uploaded_file,
             user_id=current_user_id,
-            filename=validation_result.sanitized_filename
+            filename=duplicate_result['display_filename']
         )
         
         if not storage_result.success:
@@ -645,6 +703,64 @@ def upload_file():
                 'message': 'File storage failed',
                 'error': storage_result.error_message
             }), 500
+        
+        # Initialize Google Drive variables
+        google_drive_file_id = None
+        google_doc_id = None
+        google_drive_info = None
+        
+        # Handle Google Drive upload if requested
+        if upload_to_google_drive:
+            try:
+                google_drive_service = GoogleDriveService()
+                
+                # Upload to Google Drive
+                uploaded_file.seek(0)  # Reset file pointer
+                drive_file_id = google_drive_service.upload_file_to_drive(
+                    uploaded_file, 
+                    duplicate_result['display_filename'],
+                    current_user_email if current_user_email else None
+                )
+                
+                if drive_file_id:
+                    google_drive_file_id = drive_file_id
+                    
+                    # Convert to Google Doc if requested and file is PDF
+                    if convert_to_doc and uploaded_file.content_type == 'application/pdf':
+                        doc_id = google_drive_service.convert_to_google_doc(drive_file_id)
+                        if doc_id:
+                            google_doc_id = doc_id
+                    
+                    # Share with user if requested and email is available
+                    if share_with_user and current_user_email:
+                        google_drive_service.share_file_with_user(
+                            google_drive_file_id, 
+                            current_user_email, 
+                            'writer'
+                        )
+                        if google_doc_id:
+                            google_drive_service.share_file_with_user(
+                                google_doc_id, 
+                                current_user_email, 
+                                'writer'
+                            )
+                    
+                    # Prepare Google Drive info for response
+                    google_drive_info = {
+                        'file_id': google_drive_file_id,
+                        'drive_link': f"https://drive.google.com/file/d/{google_drive_file_id}/view",
+                        'is_shared': share_with_user and bool(current_user_email)
+                    }
+                    
+                    if google_doc_id:
+                        google_drive_info.update({
+                            'doc_id': google_doc_id,
+                            'doc_link': f"https://docs.google.com/document/d/{google_doc_id}/edit"
+                        })
+                        
+            except Exception as e:
+                current_app.logger.warning(f"Google Drive upload failed: {str(e)}")
+                # Continue with local upload even if Google Drive fails
         
         # Initialize processing variables
         extracted_text = None
@@ -674,23 +790,31 @@ def upload_file():
             except Exception as e:
                 processing_warning = f"File processing error: {str(e)}"
         
-        # Create database record
+        # Create database record with enhanced fields
         try:
             resume_file = ResumeFile(
                 user_id=current_user_id,
                 original_filename=uploaded_file.filename,
+                display_filename=duplicate_result['display_filename'],
                 stored_filename=validation_result.sanitized_filename,
                 file_path=storage_result.file_path if storage_result.storage_type == 'local' else storage_result.s3_key,
                 file_size=storage_result.file_size,
                 mime_type=uploaded_file.content_type or 'application/octet-stream',
                 storage_type=storage_result.storage_type,
                 s3_bucket=getattr(storage_result, 's3_bucket', None),
-                file_hash=getattr(validation_result, 'file_hash', None) or 'temp_hash',
+                file_hash=duplicate_result['file_hash'],
                 extracted_text=extracted_text,
                 is_processed=should_process and extracted_text is not None,
                 processing_status='completed' if extracted_text else 'pending',
                 processing_error=processing_warning,
                 tags=[],
+                # Duplicate handling fields
+                is_duplicate=duplicate_result['is_duplicate'],
+                duplicate_sequence=duplicate_result.get('duplicate_sequence'),
+                original_file_id=duplicate_result.get('original_file_id'),
+                # Google Drive fields
+                google_drive_file_id=google_drive_file_id,
+                google_doc_id=google_doc_id,
                 created_at=datetime.datetime.utcnow(),
                 updated_at=datetime.datetime.utcnow()
             )
@@ -698,7 +822,7 @@ def upload_file():
             db.session.add(resume_file)
             db.session.commit()
             
-            # Prepare response
+            # Prepare enhanced response
             response_data = {
                 'success': True,
                 'message': 'File uploaded successfully',
@@ -706,20 +830,30 @@ def upload_file():
                     'file_id': resume_file.id,
                     'user_id': resume_file.user_id,
                     'original_filename': resume_file.original_filename,
+                    'display_filename': resume_file.display_filename,
                     'stored_filename': resume_file.stored_filename,
                     'file_size': resume_file.file_size,
                     'mime_type': resume_file.mime_type,
                     'storage_type': resume_file.storage_type,
-                    'storage_path': resume_file.file_path,
                     'download_url': storage_result.url,
                     'upload_date': resume_file.created_at.isoformat(),
                     'extracted_text': resume_file.extracted_text,
-                    'is_processed': resume_file.is_processed,
                     'processing_status': resume_file.processing_status,
-                    'file_hash': resume_file.file_hash,
-                    's3_bucket': resume_file.s3_bucket
+                    'duplicate_info': {
+                        'is_duplicate': resume_file.is_duplicate,
+                        'duplicate_sequence': resume_file.duplicate_sequence,
+                        'original_file_id': resume_file.original_file_id
+                    }
                 }
             }
+            
+            # Add duplicate notification if applicable
+            if duplicate_result['is_duplicate']:
+                response_data['duplicate_notification'] = duplicate_result['notification_message']
+            
+            # Add Google Drive information if available
+            if google_drive_info:
+                response_data['file']['google_drive'] = google_drive_info
             
             # Add processing warning if any
             if processing_warning:
@@ -836,12 +970,11 @@ def download_file(file_id):
         # Get current user ID from JWT
         current_user_id = request.user.get('user_id')
         
-        # Find the file record in database
+        # Find the file record in database (exclude soft-deleted files)
         resume_file = ResumeFile.query.filter_by(
             id=file_id,
-            user_id=current_user_id,
-            is_active=True
-        ).first()
+            user_id=current_user_id
+        ).filter(ResumeFile.deleted_at.is_(None)).first()
         
         if not resume_file:
             return jsonify({
@@ -1021,12 +1154,11 @@ def get_file_info(file_id):
         # Get include_text_preview parameter
         include_text_preview = request.args.get('include_text_preview', 'true').lower() == 'true'
         
-        # Get file from database
+        # Get file from database (exclude soft-deleted files)
         resume_file = ResumeFile.query.filter_by(
             id=file_id,
-            user_id=current_user_id,
-            is_active=True
-        ).first()
+            user_id=current_user_id
+        ).filter(ResumeFile.deleted_at.is_(None)).first()
         
         if not resume_file:
             return jsonify({
@@ -1082,6 +1214,223 @@ def get_file_info(file_id):
         return jsonify({
             'success': False,
             'message': f'Error retrieving file information: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files/<int:file_id>/google-doc', methods=['GET'])
+@token_required
+def get_google_doc_access(file_id):
+    """
+    Get Google Doc access information for a file
+    ---
+    tags:
+      - File Management
+      - Google Drive Integration
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to get Google Doc access for
+      - name: ensure_sharing
+        in: query
+        required: false
+        type: boolean
+        default: true
+        description: Whether to ensure the user has edit access to the Google Doc
+    responses:
+      200:
+        description: Google Doc access information retrieved successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Google Doc access information retrieved successfully"
+            google_doc:
+              type: object
+              properties:
+                file_id:
+                  type: string
+                  example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                doc_id:
+                  type: string
+                  example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+                drive_link:
+                  type: string
+                  example: "https://drive.google.com/file/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/view"
+                doc_link:
+                  type: string
+                  example: "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit"
+                has_doc_version:
+                  type: boolean
+                  example: true
+                is_shared:
+                  type: boolean
+                  example: true
+                last_updated:
+                  type: string
+                  format: date-time
+                  example: "2024-10-25T10:30:00Z"
+      400:
+        description: Invalid file ID format
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Invalid file ID format"
+      401:
+        description: Authentication required
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Authentication required"
+      403:
+        description: Access denied to this file
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Access denied to this file"
+      404:
+        description: File not found or no Google Drive integration
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File not found or no Google Drive version available"
+      500:
+        description: Server error
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Error retrieving Google Doc access information"
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user from token
+        current_user_id = request.user.get('user_id')
+        current_user_email = request.user.get('email', '')
+        
+        # Get ensure_sharing parameter
+        ensure_sharing = request.args.get('ensure_sharing', 'true').lower() == 'true'
+        
+        # Convert file_id to integer if it's a string
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Get file from database
+        resume_file = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id,
+            deleted_at=None  # Only show non-deleted files
+        ).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found'
+            }), 404
+        
+        # Check if file has Google Drive integration
+        if not resume_file.google_drive_file_id:
+            return jsonify({
+                'success': False,
+                'message': 'No Google Drive version available for this file'
+            }), 404
+        
+        # Prepare Google Doc information
+        google_doc_info = {
+            'file_id': resume_file.google_drive_file_id,
+            'drive_link': f"https://drive.google.com/file/d/{resume_file.google_drive_file_id}/view",
+            'has_doc_version': resume_file.google_doc_id is not None,
+            'last_updated': resume_file.updated_at.isoformat() if resume_file.updated_at else None
+        }
+        
+        # Add Google Doc specific information if available
+        if resume_file.google_doc_id:
+            google_doc_info.update({
+                'doc_id': resume_file.google_doc_id,
+                'doc_link': f"https://docs.google.com/document/d/{resume_file.google_doc_id}/edit"
+            })
+        
+        # Ensure user has access if requested and email is available
+        if ensure_sharing and current_user_email:
+            try:
+                google_drive_service = GoogleDriveService()
+                
+                # Share the main file
+                google_drive_service.share_file_with_user(
+                    resume_file.google_drive_file_id,
+                    current_user_email,
+                    'writer'
+                )
+                
+                # Share the Google Doc if available
+                if resume_file.google_doc_id:
+                    google_drive_service.share_file_with_user(
+                        resume_file.google_doc_id,
+                        current_user_email,
+                        'writer'
+                    )
+                
+                google_doc_info['is_shared'] = True
+                
+            except Exception as sharing_error:
+                logger.warning(f"Failed to ensure sharing for file {file_id}: {str(sharing_error)}")
+                google_doc_info['is_shared'] = False
+                google_doc_info['sharing_warning'] = "Could not verify or update sharing permissions"
+        else:
+            google_doc_info['is_shared'] = None  # Unknown status
+        
+        return jsonify({
+            'success': True,
+            'message': 'Google Doc access information retrieved successfully',
+            'google_doc': google_doc_info
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during Google Doc access retrieval: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving Google Doc access information: {str(e)}'
         }), 500
 
 
@@ -1195,12 +1544,19 @@ def delete_file(file_id):
         # Check for force parameter
         force_delete = request.args.get('force', 'false').lower() == 'true'
         
-        # Find the file record in database
-        resume_file = ResumeFile.query.filter_by(
-            id=file_id,
-            user_id=current_user_id,
-            is_active=True
-        ).first()
+        # Find the file record in database (exclude soft-deleted files unless force deleting)
+        if force_delete:
+            # For force delete, allow access to soft-deleted files to hard delete them
+            resume_file = ResumeFile.query.filter_by(
+                id=file_id,
+                user_id=current_user_id
+            ).first()
+        else:
+            # For soft delete, only allow access to non-deleted files
+            resume_file = ResumeFile.query.filter_by(
+                id=file_id,
+                user_id=current_user_id
+            ).filter(ResumeFile.deleted_at.is_(None)).first()
         
         if not resume_file:
             return jsonify({
@@ -1248,8 +1604,9 @@ def delete_file(file_id):
             delete_type = 'hard'
             
         else:
-            # Soft delete: mark as inactive
-            resume_file.is_active = False
+            # Soft delete: mark as deleted with timestamp
+            resume_file.deleted_at = datetime.datetime.utcnow()
+            resume_file.deleted_by = current_user_id
             resume_file.updated_at = datetime.datetime.utcnow()
             delete_type = 'soft'
         
@@ -1320,6 +1677,11 @@ def list_files():
         in: query
         type: string
         description: Search in filenames (case-insensitive)
+      - name: include_deleted
+        in: query
+        type: boolean
+        default: false
+        description: Include soft-deleted files in results (admin feature)
     responses:
       200:
         description: Files listed successfully
@@ -1424,6 +1786,7 @@ def list_files():
         mime_type = request.args.get('mime_type')
         processing_status = request.args.get('processing_status')
         search = request.args.get('search')
+        include_deleted = request.args.get('include_deleted', 'false').lower() == 'true'
         
         # Validate pagination parameters
         if page < 1:
@@ -1462,11 +1825,12 @@ def list_files():
                     'message': f'Invalid processing status. Must be one of: {", ".join(valid_statuses)}'
                 }), 400
         
-        # Build query
-        query = ResumeFile.query.filter_by(
-            user_id=current_user_id,
-            is_active=True
-        )
+        # Build query - filter out soft-deleted files by default
+        query = ResumeFile.query.filter_by(user_id=current_user_id)
+        
+        # Filter out soft-deleted files unless explicitly requested (admin feature)
+        if not include_deleted:
+            query = query.filter(ResumeFile.deleted_at.is_(None))
         
         # Apply filters
         if mime_type:
@@ -1499,17 +1863,33 @@ def list_files():
         # Format response
         files_data = []
         for file in files:
-            files_data.append({
+            file_data = {
                 'id': file.id,
                 'original_filename': file.original_filename,
+                'display_filename': getattr(file, 'display_filename', file.original_filename),
                 'file_size': file.file_size,
                 'mime_type': file.mime_type,
                 'storage_type': file.storage_type,
                 'created_at': file.created_at.isoformat() if file.created_at else None,
                 'updated_at': file.updated_at.isoformat() if file.updated_at else None,
                 'processing_status': file.processing_status,
-                'page_count': file.page_count
-            })
+                'is_deleted': file.deleted_at is not None,
+                'deleted_at': file.deleted_at.isoformat() if file.deleted_at else None,
+                'is_duplicate': getattr(file, 'is_duplicate', False),
+                'duplicate_sequence': getattr(file, 'duplicate_sequence', None)
+            }
+            
+            # Add Google Drive information if available
+            if hasattr(file, 'google_drive_file_id') and file.google_drive_file_id:
+                file_data['google_drive'] = {
+                    'file_id': file.google_drive_file_id,
+                    'doc_id': getattr(file, 'google_doc_id', None),
+                    'drive_link': f"https://drive.google.com/file/d/{file.google_drive_file_id}/view"
+                }
+                if file.google_doc_id:
+                    file_data['google_drive']['doc_link'] = f"https://docs.google.com/document/d/{file.google_doc_id}/edit"
+            
+            files_data.append(file_data)
         
         return jsonify({
             'success': True,
@@ -1527,6 +1907,633 @@ def list_files():
         return jsonify({
             'success': False,
             'message': f'Error retrieving files: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files/<int:file_id>/restore', methods=['POST'])
+@token_required
+def restore_file(file_id):
+    """
+    Restore a soft-deleted file
+    ---
+    tags:
+      - File Management
+      - Admin
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to restore
+    responses:
+      200:
+        description: File restored successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "File restored successfully"
+            file:
+              type: object
+              properties:
+                file_id:
+                  type: integer
+                  example: 123
+                original_filename:
+                  type: string
+                  example: "resume.pdf"
+                restored_at:
+                  type: string
+                  format: date-time
+                  example: "2024-10-25T10:30:00Z"
+                restored_by:
+                  type: integer
+                  example: 1
+      400:
+        description: Invalid file ID format or file not deleted
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File is not deleted or invalid file ID"
+      401:
+        description: Authentication required
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Authentication required"
+      403:
+        description: Access denied - user doesn't own the file
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "Access denied to this file"
+      404:
+        description: File not found
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File not found"
+      500:
+        description: Server error during restoration
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: false
+            message:
+              type: string
+              example: "File restoration failed"
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user ID from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # Convert file_id to integer if it's a string
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Find the soft-deleted file
+        resume_file = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id
+        ).filter(ResumeFile.deleted_at.is_not(None)).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found or not deleted'
+            }), 404
+        
+        # Check if user owns the file (additional security check)
+        if resume_file.user_id != current_user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Access denied to this file'
+            }), 403
+        
+        # Restore the file
+        resume_file.deleted_at = None
+        resume_file.deleted_by = None
+        resume_file.updated_at = datetime.datetime.utcnow()
+        
+        # Commit the database changes
+        db.session.commit()
+        
+        # Log the restoration for audit purposes
+        logger.info(f"File {file_id} restored by user {current_user_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'File restored successfully',
+            'file': {
+                'file_id': resume_file.id,
+                'original_filename': resume_file.original_filename,
+                'display_filename': getattr(resume_file, 'display_filename', resume_file.original_filename),
+                'restored_at': resume_file.updated_at.isoformat(),
+                'restored_by': current_user_id
+            }
+        }), 200
+        
+    except Exception as e:
+        # Rollback any database changes
+        db.session.rollback()
+        logger.error(f"Unexpected error during file restoration: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'File restoration failed: {str(e)}'
+        }), 500
+
+
+@api.route('/api/admin/files/deleted', methods=['GET'])
+@token_required
+def list_deleted_files():
+    """
+    List soft-deleted files for admin review
+    ---
+    tags:
+      - File Management
+      - Admin
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication (admin required)
+      - name: page
+        in: query
+        type: integer
+        default: 1
+        description: Page number for pagination (1-based)
+      - name: limit
+        in: query
+        type: integer
+        default: 10
+        description: Number of files per page (max 100)
+      - name: user_id
+        in: query
+        type: integer
+        description: Filter by specific user ID
+      - name: sort_by
+        in: query
+        type: string
+        enum: [deleted_at, created_at, file_size, original_filename]
+        default: deleted_at
+        description: Field to sort by
+      - name: sort_order
+        in: query
+        type: string
+        enum: [asc, desc]
+        default: desc
+        description: Sort order
+    responses:
+      200:
+        description: Deleted files listed successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            files:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    example: 123
+                  user_id:
+                    type: integer
+                    example: 1
+                  original_filename:
+                    type: string
+                    example: "resume.pdf"
+                  display_filename:
+                    type: string
+                    example: "Resume (1).pdf"
+                  file_size:
+                    type: integer
+                    example: 1024
+                  created_at:
+                    type: string
+                    format: date-time
+                    example: "2024-01-01T10:00:00Z"
+                  deleted_at:
+                    type: string
+                    format: date-time
+                    example: "2024-01-02T10:00:00Z"
+                  deleted_by:
+                    type: integer
+                    example: 1
+            total:
+              type: integer
+              example: 25
+            page:
+              type: integer
+              example: 1
+            limit:
+              type: integer
+              example: 10
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Server error
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # TODO: Add proper admin role checking
+        # For now, just log the admin access attempt
+        logger.info(f"Admin deleted files access attempted by user {current_user_id}")
+        
+        # Parse query parameters
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 10, type=int)
+        user_id_filter = request.args.get('user_id', type=int)
+        sort_by = request.args.get('sort_by', 'deleted_at')
+        sort_order = request.args.get('sort_order', 'desc')
+        
+        # Validate pagination parameters
+        if page < 1:
+            return jsonify({
+                'success': False,
+                'message': 'Page number must be 1 or greater'
+            }), 400
+            
+        if limit < 1 or limit > 100:
+            return jsonify({
+                'success': False,
+                'message': 'Limit must be between 1 and 100'
+            }), 400
+        
+        # Validate sort parameters
+        valid_sort_fields = ['deleted_at', 'created_at', 'file_size', 'original_filename']
+        if sort_by not in valid_sort_fields:
+            return jsonify({
+                'success': False,
+                'message': f'Invalid sort field. Must be one of: {", ".join(valid_sort_fields)}'
+            }), 400
+            
+        valid_sort_orders = ['asc', 'desc']
+        if sort_order not in valid_sort_orders:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid sort order. Must be "asc" or "desc"'
+            }), 400
+        
+        # Build query for soft-deleted files only
+        query = ResumeFile.query.filter(ResumeFile.deleted_at.is_not(None))
+        
+        # Apply user filter if specified
+        if user_id_filter:
+            query = query.filter(ResumeFile.user_id == user_id_filter)
+        
+        # Apply sorting
+        sort_column = getattr(ResumeFile, sort_by)
+        if sort_order == 'desc':
+            query = query.order_by(sort_column.desc())
+        else:
+            query = query.order_by(sort_column.asc())
+        
+        # Get total count for pagination
+        total_count = query.count()
+        
+        # Apply pagination
+        offset = (page - 1) * limit
+        files = query.offset(offset).limit(limit).all()
+        
+        # Calculate pagination info
+        has_next = total_count > (page * limit)
+        has_prev = page > 1
+        
+        # Format response
+        files_data = []
+        for file in files:
+            files_data.append({
+                'id': file.id,
+                'user_id': file.user_id,
+                'original_filename': file.original_filename,
+                'display_filename': getattr(file, 'display_filename', file.original_filename),
+                'file_size': file.file_size,
+                'mime_type': file.mime_type,
+                'created_at': file.created_at.isoformat() if file.created_at else None,
+                'deleted_at': file.deleted_at.isoformat() if file.deleted_at else None,
+                'deleted_by': file.deleted_by,
+                'is_duplicate': getattr(file, 'is_duplicate', False),
+                'google_drive_file_id': getattr(file, 'google_drive_file_id', None)
+            })
+        
+        return jsonify({
+            'success': True,
+            'files': files_data,
+            'total': total_count,
+            'page': page,
+            'limit': limit,
+            'has_next': has_next,
+            'has_prev': has_prev
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during deleted files listing: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving deleted files: {str(e)}'
+        }), 500
+
+
+@api.route('/api/admin/files/<int:file_id>/restore', methods=['POST'])
+@token_required  
+def admin_restore_file(file_id):
+    """
+    Admin restore a soft-deleted file for any user
+    ---
+    tags:
+      - File Management
+      - Admin
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication (admin required)
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to restore
+    responses:
+      200:
+        description: File restored successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "File restored successfully"
+            file:
+              type: object
+              properties:
+                file_id:
+                  type: integer
+                  example: 123
+                user_id:
+                  type: integer
+                  example: 1
+                original_filename:
+                  type: string
+                  example: "resume.pdf"
+                restored_at:
+                  type: string
+                  format: date-time
+                  example: "2024-10-25T10:30:00Z"
+                restored_by:
+                  type: integer
+                  example: 2
+      400:
+        description: Invalid file ID format or file not deleted
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      404:
+        description: File not found
+      500:
+        description: Server error during restoration
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # TODO: Add proper admin role checking
+        logger.info(f"Admin file restoration attempted by user {current_user_id} for file {file_id}")
+        
+        # Convert file_id to integer if it's a string
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Find the soft-deleted file (any user's file)
+        resume_file = ResumeFile.query.filter_by(id=file_id).filter(
+            ResumeFile.deleted_at.is_not(None)
+        ).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found or not deleted'
+            }), 404
+        
+        # Restore the file
+        resume_file.deleted_at = None
+        resume_file.deleted_by = None
+        resume_file.updated_at = datetime.datetime.utcnow()
+        
+        # Commit the database changes
+        db.session.commit()
+        
+        # Log the restoration for audit purposes
+        logger.info(f"File {file_id} (user {resume_file.user_id}) restored by admin {current_user_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'File restored successfully',
+            'file': {
+                'file_id': resume_file.id,
+                'user_id': resume_file.user_id,
+                'original_filename': resume_file.original_filename,
+                'display_filename': getattr(resume_file, 'display_filename', resume_file.original_filename),
+                'restored_at': resume_file.updated_at.isoformat(),
+                'restored_by': current_user_id
+            }
+        }), 200
+        
+    except Exception as e:
+        # Rollback any database changes
+        db.session.rollback()
+        logger.error(f"Unexpected error during admin file restoration: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'File restoration failed: {str(e)}'
+        }), 500
+
+
+@api.route('/api/admin/files/<int:file_id>/permanent-delete', methods=['DELETE'])
+@token_required
+def admin_permanent_delete(file_id):
+    """
+    Admin permanently delete a soft-deleted file (hard delete)
+    ---
+    tags:
+      - File Management
+      - Admin
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication (admin required)
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to permanently delete
+    responses:
+      200:
+        description: File permanently deleted successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "File permanently deleted"
+            file_id:
+              type: integer
+              example: 123
+      400:
+        description: Invalid file ID format
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      404:
+        description: File not found or not deleted
+      500:
+        description: Server error during permanent deletion
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user from JWT
+        current_user_id = request.user.get('user_id')
+        
+        # TODO: Add proper admin role checking
+        logger.warning(f"Admin permanent deletion attempted by user {current_user_id} for file {file_id}")
+        
+        # Convert file_id to integer if it's a string
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Find the soft-deleted file (any user's file)
+        resume_file = ResumeFile.query.filter_by(id=file_id).filter(
+            ResumeFile.deleted_at.is_not(None)
+        ).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found or not deleted'
+            }), 404
+        
+        # Get file information for logging before deletion
+        original_filename = resume_file.original_filename
+        file_user_id = resume_file.user_id
+        
+        # Delete from storage if file has a path
+        if resume_file.file_path:
+            try:
+                # Initialize storage service with centralized configuration
+                from app.utils.storage_config import StorageConfigManager
+                storage_config = StorageConfigManager.get_storage_config_dict()
+                storage_service = FileStorageService(storage_config)
+                
+                # Hard delete: remove from storage
+                delete_result = storage_service.delete_file(
+                    file_path=resume_file.file_path,
+                    storage_type=resume_file.storage_type,
+                    s3_bucket=resume_file.s3_bucket
+                )
+                
+                if not delete_result.success:
+                    logger.error(f"Storage deletion failed for file {file_id}: {delete_result.error_message}")
+                    # Continue with database deletion even if storage deletion fails
+                    
+            except Exception as storage_error:
+                logger.error(f"Error deleting file from storage: {str(storage_error)}")
+                # Continue with database deletion even if storage deletion fails
+        
+        # Remove from database completely
+        db.session.delete(resume_file)
+        db.session.commit()
+        
+        # Log the permanent deletion for audit purposes
+        logger.warning(f"File {file_id} ({original_filename}) for user {file_user_id} permanently deleted by admin {current_user_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'File permanently deleted',
+            'file_id': file_id
+        }), 200
+        
+    except Exception as e:
+        # Rollback any database changes
+        db.session.rollback()
+        logger.error(f"Unexpected error during admin permanent deletion: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Permanent deletion failed: {str(e)}'
         }), 500
 
 
@@ -1658,11 +2665,18 @@ def bulk_delete_files():
         for file_id in file_ids:
             try:
                 # Get file from database (must belong to current user)
-                resume_file = ResumeFile.query.filter_by(
-                    id=file_id,
-                    user_id=current_user_id,
-                    is_active=True
-                ).first()
+                if force_delete:
+                    # For force delete, allow access to soft-deleted files to hard delete them
+                    resume_file = ResumeFile.query.filter_by(
+                        id=file_id,
+                        user_id=current_user_id
+                    ).first()
+                else:
+                    # For soft delete, only allow access to non-deleted files
+                    resume_file = ResumeFile.query.filter_by(
+                        id=file_id,
+                        user_id=current_user_id
+                    ).filter(ResumeFile.deleted_at.is_(None)).first()
                 
                 if not resume_file:
                     failed_files.append({
@@ -1692,9 +2706,10 @@ def bulk_delete_files():
                     # Remove from database
                     db.session.delete(resume_file)
                 else:
-                    # Soft delete - just mark as inactive
-                    resume_file.is_active = False
-                    resume_file.updated_at = datetime.utcnow()
+                    # Soft delete - mark as deleted with timestamp
+                    resume_file.deleted_at = datetime.datetime.utcnow()
+                    resume_file.deleted_by = current_user_id
+                    resume_file.updated_at = datetime.datetime.utcnow()
                 
                 db.session.commit()
                 deleted_count += 1
@@ -1880,12 +2895,11 @@ def process_file(file_id):
                 'message': 'Invalid file ID format'
             }), 400
         
-        # Find the file
+        # Find the file (exclude soft-deleted files)
         file_record = ResumeFile.query.filter_by(
             id=file_id,
-            user_id=current_user_id,
-            is_active=True
-        ).first()
+            user_id=current_user_id
+        ).filter(ResumeFile.deleted_at.is_(None)).first()
         
         if not file_record:
             return jsonify({

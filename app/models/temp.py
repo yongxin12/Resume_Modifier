@@ -3,8 +3,7 @@ from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy 
 from flask import Flask
-from datetime import datetime
-import os, timedelta
+from datetime import datetime, timedelta
 import os
 import hashlib
 import secrets
