@@ -62,7 +62,7 @@ class FileValidator:
     # Default configuration
     DEFAULT_CONFIG = {
         'allowed_extensions': ['pdf', 'docx'],
-        'max_file_size_mb': 50,
+        'max_file_size_mb': 10,  # 10MB as per API specification
         'virus_scanning_enabled': False,
         'content_validation_enabled': True,
         'filename_security_checks': True

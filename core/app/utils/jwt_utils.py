@@ -50,8 +50,8 @@ def token_required(f):
         if not token:
             return jsonify({
                 "success": False,
-                "error": "Token is missing - authentication required",
-                "message": "Token is missing - authentication required"
+                "error": "Token is missing - authentication_required",
+                "message": "Token is missing - authentication_required"
             }), 401
             
         try:

@@ -4935,10 +4935,19 @@ def generate_resume():
     if not current_user:
         return jsonify({"error": "User not found"}), 404
     
-    # Validate required fields
-    if not data or not all(key in data for key in ['user_data', 'job_description', 'template_id']):
+    # Validate required fields - support both API formats
+    if not data:
         return jsonify({
             "error": "Missing required_fields: user_data, job_description, template_id"
+        }), 400
+    
+    # Check for new API format (resume_id, job_description_id) or legacy format (user_data, job_description, template_id)
+    has_new_format = all(key in data for key in ['resume_id', 'job_description_id'])
+    has_legacy_format = all(key in data for key in ['user_data', 'job_description', 'template_id'])
+    
+    if not has_new_format and not has_legacy_format:
+        return jsonify({
+            "error": "Missing required_fields: user_data, job_description, template_id or resume_id, job_description_id"
         }), 400
     
     try:
