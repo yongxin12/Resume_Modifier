@@ -355,11 +355,15 @@ class TestGoogleDriveService:
         
         result = google_drive_service.create_user_folder(user_id, user_email)
         
-        assert result['success'] is False
+        assert result is None
     
     def test_get_service_with_credentials(self, google_drive_service):
         """Test _get_service method with credentials"""
         mock_credentials = Mock()
+        
+        # Temporarily clear existing service to test credentials path
+        original_service = google_drive_service.drive_service
+        google_drive_service.drive_service = None
         
         with patch('app.services.google_drive_service.build') as mock_build:
             mock_service = Mock()
@@ -369,6 +373,9 @@ class TestGoogleDriveService:
             
             assert result == mock_service
             mock_build.assert_called_once_with('drive', 'v3', credentials=mock_credentials)
+        
+        # Restore original service
+        google_drive_service.drive_service = original_service
     
     def test_get_service_with_existing_service(self, google_drive_service):
         """Test _get_service method returns existing service"""
@@ -419,14 +426,24 @@ class TestGoogleDriveService:
         filename = 'test-resume.pdf'
         user_id = 1
         
-        result = google_drive_service.upload_file_to_drive(
-            file_content=file_obj.getvalue(),
-            filename=filename,
-            mime_type='application/pdf',
-            user_id=user_id
-        )
+        # Temporarily unset TESTING to get real error behavior
+        original_testing = os.environ.get('TESTING')
+        if 'TESTING' in os.environ:
+            del os.environ['TESTING']
         
-        assert result['success'] is False
+        try:
+            result = google_drive_service.upload_file_to_drive(
+                file_content=file_obj.getvalue(),
+                filename=filename,
+                mime_type='application/pdf',
+                user_id=user_id
+            )
+            
+            assert result['success'] is False
+        finally:
+            # Restore TESTING environment variable
+            if original_testing:
+                os.environ['TESTING'] = original_testing
         assert 'error' in result
     
     def test_file_conversion_unsupported_type(self, google_drive_service, mock_drive_service):

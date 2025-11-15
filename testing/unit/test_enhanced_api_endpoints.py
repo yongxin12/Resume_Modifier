@@ -378,9 +378,8 @@ class TestEnhancedFileAPI:
     def test_google_doc_access_endpoint(self, app, client, auth_headers, test_user):
         """Test Google Doc access endpoint"""
         with app.app_context():
-            # Create file with Google Drive integration
+            # Create file with Google Drive integration (let database assign ID)
             test_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='resume.pdf',
                 display_filename='resume.pdf',
@@ -392,34 +391,37 @@ class TestEnhancedFileAPI:
             )
             db.session.add(test_file)
             db.session.commit()
+            file_id = test_file.id  # Get the auto-assigned ID
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
+            
+            with patch('app.server.GoogleDriveService') as mock_gdrive_class:
+                mock_gdrive_instance = Mock()
+                mock_gdrive_instance.share_file_with_user.return_value = True
+                mock_gdrive_class.return_value = mock_gdrive_instance
                 
-                with patch('app.services.google_drive_service.GoogleDriveService') as mock_gdrive:
-                    mock_gdrive.return_value.share_file_with_user.return_value = True
-                    
-                    response = client.get(
-                        '/api/files/1/google-doc?ensure_sharing=true',
-                        headers={'Authorization': auth_headers['Authorization']}
-                    )
-                    
-                    assert response.status_code == 200
-                    data = json.loads(response.data)
-                    assert data['success'] is True
-                    assert 'google_doc' in data
-                    assert data['google_doc']['file_id'] == 'drive-file-id-123'
-                    assert data['google_doc']['doc_id'] == 'doc-id-456'
-                    assert data['google_doc']['has_doc_version'] is True
-                    assert 'drive_link' in data['google_doc']
-                    assert 'doc_link' in data['google_doc']
+                response = client.get(
+                    f'/api/files/{file_id}/google-doc?ensure_sharing=true',
+                    headers={'Authorization': auth_headers['Authorization']}
+                )
+                
+                assert response.status_code == 200
+                data = json.loads(response.data)
+                assert data['success'] is True
+                assert 'google_doc' in data
+                assert data['google_doc']['file_id'] == 'drive-file-id-123'
+                assert data['google_doc']['doc_id'] == 'doc-id-456'
+                assert data['google_doc']['has_doc_version'] is True
+                assert 'drive_link' in data['google_doc']
+                assert 'doc_link' in data['google_doc']
     
     def test_google_doc_access_no_google_drive(self, app, client, auth_headers, test_user):
         """Test Google Doc access endpoint for file without Google Drive integration"""
         with app.app_context():
-            # Create file without Google Drive integration
+            # Create file without Google Drive integration (let database assign ID)
             test_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='resume.pdf',
                 display_filename='resume.pdf',
@@ -429,26 +431,27 @@ class TestEnhancedFileAPI:
             )
             db.session.add(test_file)
             db.session.commit()
+            file_id = test_file.id  # Get the auto-assigned ID
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-                
-                response = client.get(
-                    '/api/files/1/google-doc',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 404
-                data = json.loads(response.data)
-                assert data['success'] is False
-                assert 'No Google Drive version available' in data['message']
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
+            
+            response = client.get(
+                f'/api/files/{file_id}/google-doc',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 404
+            data = json.loads(response.data)
+            assert data['success'] is False
+            assert 'No Google Drive version available' in data['message']
     
     def test_file_restore_endpoint(self, app, client, auth_headers, test_user):
         """Test file restoration endpoint"""
         with app.app_context():
-            # Create soft-deleted file
+            # Create soft-deleted file (let database assign ID)
             deleted_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='resume.pdf',
                 display_filename='resume.pdf',
@@ -460,32 +463,33 @@ class TestEnhancedFileAPI:
             )
             db.session.add(deleted_file)
             db.session.commit()
+            file_id = deleted_file.id  # Get the auto-assigned ID
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-                
-                response = client.post(
-                    '/api/files/1/restore',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 200
-                data = json.loads(response.data)
-                assert data['success'] is True
-                assert 'restored_at' in data['file']
-                assert data['file']['restored_by'] == 1
-                
-                # Verify file is restored in database
-                restored_file = ResumeFile.query.get(1)
-                assert restored_file.deleted_at is None
-                assert restored_file.deleted_by is None
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
+            
+            response = client.post(
+                f'/api/files/{file_id}/restore',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data['success'] is True
+            assert 'restored_at' in data['file']
+            assert data['file']['restored_by'] == 1
+            
+            # Verify file is restored in database
+            restored_file = ResumeFile.query.get(file_id)
+            assert restored_file.deleted_at is None
+            assert restored_file.deleted_by is None
     
     def test_file_restore_not_deleted(self, app, client, auth_headers, test_user):
         """Test restoring a file that is not deleted"""
         with app.app_context():
-            # Create active file
+            # Create active file (let database assign ID)
             active_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='resume.pdf',
                 display_filename='resume.pdf',
@@ -495,26 +499,27 @@ class TestEnhancedFileAPI:
             )
             db.session.add(active_file)
             db.session.commit()
+            file_id = active_file.id  # Get the auto-assigned ID
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-                
-                response = client.post(
-                    '/api/files/1/restore',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 404
-                data = json.loads(response.data)
-                assert data['success'] is False
-                assert 'not found or not deleted' in data['message']
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
+            
+            response = client.post(
+                f'/api/files/{file_id}/restore',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 404
+            data = json.loads(response.data)
+            assert data['success'] is False
+            assert 'not found or not deleted' in data['message']
     
     def test_admin_list_deleted_files(self, app, client, auth_headers, test_user):
         """Test admin endpoint for listing deleted files"""
         with app.app_context():
-            # Create mix of active and deleted files
+            # Create mix of active and deleted files (let database assign IDs)
             active_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='active.pdf',
                 display_filename='active.pdf',
@@ -525,7 +530,6 @@ class TestEnhancedFileAPI:
             db.session.add(active_file)
             
             deleted_file = create_resume_file(
-                id=2,
                 user_id=test_user.id,
                 original_filename='deleted.pdf',
                 display_filename='deleted.pdf',
@@ -538,28 +542,28 @@ class TestEnhancedFileAPI:
             db.session.add(deleted_file)
             db.session.commit()
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-                
-                response = client.get(
-                    '/api/admin/files/deleted',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 200
-                data = json.loads(response.data)
-                assert data['success'] is True
-                assert len(data['files']) == 1
-                assert data['files'][0]['original_filename'] == 'deleted.pdf'
-                assert data['files'][0]['deleted_at'] is not None
-                assert data['total'] == 1
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
+            
+            response = client.get(
+                '/api/admin/files/deleted',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data['success'] is True
+            assert len(data['files']) == 1
+            assert data['files'][0]['original_filename'] == 'deleted.pdf'
+            assert data['files'][0]['deleted_at'] is not None
+            assert data['total'] == 1
     
     def test_admin_restore_file(self, app, client, auth_headers, test_user):
         """Test admin file restoration endpoint"""
         with app.app_context():
-            # Create soft-deleted file
+            # Create soft-deleted file (let database assign ID)
             deleted_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='resume.pdf',
                 display_filename='resume.pdf',
@@ -571,27 +575,28 @@ class TestEnhancedFileAPI:
             )
             db.session.add(deleted_file)
             db.session.commit()
+            file_id = deleted_file.id  # Get the auto-assigned ID
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 2, 'email': 'admin@example.com'}  # Different admin user
-                
-                response = client.post(
-                    '/api/admin/files/1/restore',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 200
-                data = json.loads(response.data)
-                assert data['success'] is True
-                assert data['file']['user_id'] == 1  # Original owner
-                assert data['file']['restored_by'] == 2  # Admin who restored
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return admin user data
+            mock_verify_token.return_value = {'user_id': 2, 'email': 'admin@example.com'}
+            
+            response = client.post(
+                f'/api/admin/files/{file_id}/restore',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data['success'] is True
+            assert data['file']['user_id'] == 1  # Original owner
+            assert data['file']['restored_by'] == 2  # Admin who restored
     
     def test_admin_permanent_delete(self, app, client, auth_headers, test_user):
         """Test admin permanent deletion endpoint"""
         with app.app_context():
-            # Create soft-deleted file
+            # Create soft-deleted file (let database assign ID)
             deleted_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='resume.pdf',
                 display_filename='resume.pdf',
@@ -603,39 +608,42 @@ class TestEnhancedFileAPI:
             )
             db.session.add(deleted_file)
             db.session.commit()
+            file_id = deleted_file.id  # Get the auto-assigned ID
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 2, 'email': 'admin@example.com'}  # Admin user
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return admin user data
+            mock_verify_token.return_value = {'user_id': 2, 'email': 'admin@example.com'}
+            
+            with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
+                mock_storage_config.get_storage_config_dict.return_value = {
+                    'storage_type': 'local',  
+                    'local_storage_path': '/tmp'
+                }
                 
-                with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
-                        mock_storage_config.get_storage_config_dict.return_value = {
-                            'storage_type': 'local',  
-                            'local_storage_path': '/tmp'
-                        }
-                        
-                        with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
-                            mock_storage.return_value.delete_file.return_value = Mock(success=True)
-                        
-                        response = client.delete(
-                            '/api/admin/files/1/permanent-delete',
-                            headers={'Authorization': auth_headers['Authorization']}
-                        )
-                        
-                        assert response.status_code == 200
-                        data = json.loads(response.data)
-                        assert data['success'] is True
-                        assert data['file_id'] == 1
-                        
-                        # Verify file is permanently deleted from database
-                        deleted_file_check = ResumeFile.query.get(1)
-                        assert deleted_file_check is None
+                with patch('app.server.FileStorageService') as mock_storage_class:
+                    mock_storage_instance = Mock()
+                    mock_storage_instance.delete_file.return_value = Mock(success=True)
+                    mock_storage_class.return_value = mock_storage_instance
+                
+                    response = client.delete(
+                        f'/api/admin/files/{file_id}/permanent-delete',
+                        headers={'Authorization': auth_headers['Authorization']}
+                    )
+                    
+                    assert response.status_code == 200
+                    data = json.loads(response.data)
+                    assert data['success'] is True
+                    assert data['file_id'] == file_id
+                    
+                    # Verify file is permanently deleted from database
+                    deleted_file_check = ResumeFile.query.get(file_id)
+                    assert deleted_file_check is None
     
     def test_enhanced_file_listing_excludes_deleted(self, app, client, auth_headers, test_user):
         """Test that file listing excludes soft-deleted files by default"""
         with app.app_context():
-            # Create mix of active and deleted files
+            # Create mix of active and deleted files (let database assign IDs)
             active_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='active.pdf',
                 display_filename='active.pdf',
@@ -646,40 +654,40 @@ class TestEnhancedFileAPI:
             db.session.add(active_file)
             
             deleted_file = create_resume_file(
-                id=2,
                 user_id=test_user.id,
                 original_filename='deleted.pdf',
                 display_filename='deleted.pdf',
                 stored_filename='stored_deleted.pdf',
                 file_size=2048,
                 mime_type='application/pdf',
+                is_active=False,
                 deleted_at=datetime.datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
             db.session.commit()
+        
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-                
-                response = client.get(
-                    '/api/files',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 200
-                data = json.loads(response.data)
-                assert data['success'] is True
-                assert len(data['files']) == 1
-                assert data['files'][0]['original_filename'] == 'active.pdf'
-                assert data['total'] == 1
+            response = client.get(
+                '/api/files',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data['success'] is True
+            assert len(data['files']) == 1
+            assert data['files'][0]['original_filename'] == 'active.pdf'
+            assert data['total'] == 1
     
     def test_enhanced_file_listing_includes_deleted_when_requested(self, app, client, auth_headers, test_user):
         """Test that file listing includes deleted files when explicitly requested"""
         with app.app_context():
-            # Create mix of active and deleted files
+            # Create mix of active and deleted files (let database assign IDs)
             active_file = create_resume_file(
-                id=1,
                 user_id=test_user.id,
                 original_filename='active.pdf',
                 display_filename='active.pdf',
@@ -690,56 +698,76 @@ class TestEnhancedFileAPI:
             db.session.add(active_file)
             
             deleted_file = create_resume_file(
-                id=2,
                 user_id=test_user.id,
                 original_filename='deleted.pdf',
                 display_filename='deleted.pdf',
                 stored_filename='stored_deleted.pdf',
                 file_size=2048,
                 mime_type='application/pdf',
+                is_active=False,
                 deleted_at=datetime.datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
             db.session.commit()
+            deleted_file_id = deleted_file.id  # Get the auto-assigned ID
+        
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
             
-            with patch('flask.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-                
-                response = client.get(
-                    '/api/files?include_deleted=true',
-                    headers={'Authorization': auth_headers['Authorization']}
-                )
-                
-                assert response.status_code == 200
-                data = json.loads(response.data)
-                assert data['success'] is True
-                assert len(data['files']) == 2
-                assert data['total'] == 2
-                
-                # Check that deleted file is marked as deleted
-                deleted_file_data = next(f for f in data['files'] if f['id'] == 2)
-                assert deleted_file_data['is_deleted'] is True
-                assert deleted_file_data['deleted_at'] is not None
+            response = client.get(
+                '/api/files?include_deleted=true',
+                headers={'Authorization': auth_headers['Authorization']}
+            )
+            
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data['success'] is True
+            assert len(data['files']) == 2
+            assert data['total'] == 2
+            
+            # Check that deleted file is marked as deleted
+            deleted_file_data = next(f for f in data['files'] if f['id'] == deleted_file_id)
+            assert deleted_file_data['is_deleted'] is True
+            assert deleted_file_data['deleted_at'] is not None
     
     def test_google_drive_error_handling_in_upload(self, client, auth_headers, sample_pdf_file):
         """Test error handling for Google Drive failures during upload"""
-        with patch('flask.request') as mock_request:
-            mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
             
-            with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
-                mock_handler.return_value.process_duplicate_file.return_value = {
-                    'is_duplicate': False,
-                    'display_filename': 'resume.pdf',
-                    'file_hash': 'abc123',
-                    'notification_message': None,
-                    'duplicate_sequence': None,
-                    'original_file_id': None
-                }
+            with patch('app.server.FileValidator') as mock_validator_class:
+                mock_validator_instance = Mock()
+                validation_result = Mock()
+                validation_result.is_valid = True
+                validation_result.errors = []
+                validation_result.file_hash = 'abc123hash'  # Add the missing file_hash
+                validation_result.sanitized_filename = 'resume.pdf'  # Add missing sanitized_filename
+                mock_validator_instance.validate_file.return_value = validation_result
+                mock_validator_class.return_value = mock_validator_instance
+            
+                with patch('app.server.DuplicateFileHandler') as mock_handler_class:
+                    mock_handler_instance = Mock()
+                    mock_handler_instance.process_duplicate_file.return_value = {
+                        'is_duplicate': False,
+                        'display_filename': 'resume.pdf',
+                        'file_hash': 'abc123',
+                        'notification_message': None,
+                        'duplicate_sequence': None,
+                        'original_file_id': None
+                    }
+                    mock_handler_class.return_value = mock_handler_instance
                 
-                with patch('app.services.google_drive_service.GoogleDriveService') as mock_gdrive:
+                with patch('app.server.GoogleDriveService') as mock_gdrive_class:
                     # Simulate Google Drive failure
-                    mock_gdrive.return_value.upload_file_to_drive.side_effect = Exception("Google Drive API error")
+                    mock_gdrive_instance = Mock()
+                    mock_gdrive_instance.upload_file_to_drive.side_effect = Exception("Google Drive API error")
+                    # Mock other methods that might be called during error handling
+                    mock_gdrive_instance.convert_to_google_doc.return_value = None
+                    mock_gdrive_instance.share_file_with_user.return_value = {'success': False}
+                    mock_gdrive_class.return_value = mock_gdrive_instance
                     
                     with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
                         mock_storage_config.get_storage_config_dict.return_value = {
@@ -747,14 +775,18 @@ class TestEnhancedFileAPI:
                             'local_storage_path': '/tmp'
                         }
                         
-                        with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
-                            mock_storage.return_value.upload_file.return_value = Mock(
-                                success=True,
-                                file_path='/tmp/resume.pdf',
-                                file_size=1024,
-                                storage_type='local',
-                                url='http://localhost:5001/files/1'
-                            )
+                        with patch('app.server.FileStorageService') as mock_storage_class:
+                            mock_storage_instance = Mock()
+                            # Create a proper mock object with attribute access
+                            storage_result = Mock()
+                            storage_result.success = True
+                            storage_result.file_path = '/tmp/resume.pdf'
+                            storage_result.file_size = 1024
+                            storage_result.storage_type = 'local'
+                            storage_result.url = 'http://localhost:5001/files/1'
+                            storage_result.s3_bucket = None  # Add missing s3_bucket field
+                            mock_storage_instance.upload_file.return_value = storage_result
+                            mock_storage_class.return_value = mock_storage_instance
                             
                             response = client.post(
                                 '/api/files/upload?google_drive=true',
@@ -773,42 +805,61 @@ class TestEnhancedFileAPI:
     
     def test_duplicate_detection_error_handling_in_upload(self, client, auth_headers, sample_pdf_file):
         """Test error handling for duplicate detection failures during upload"""
-        with patch('flask.request') as mock_request:
-            mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
             
-            with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
-                # Simulate duplicate detection failure
-                mock_handler.return_value.process_duplicate_file.side_effect = Exception("Hash calculation failed")
+            with patch('app.server.FileValidator') as mock_validator_class:
+                mock_validator_instance = Mock()
+                validation_result = Mock()
+                validation_result.is_valid = True
+                validation_result.errors = []
+                validation_result.file_hash = 'abc123hash'  # Add the missing file_hash
+                validation_result.sanitized_filename = 'resume.pdf'  # Add missing sanitized_filename
+                mock_validator_instance.validate_file.return_value = validation_result
+                mock_validator_class.return_value = mock_validator_instance
+            
+                with patch('app.server.DuplicateFileHandler') as mock_handler_class:
+                    # Simulate duplicate detection failure
+                    mock_handler_instance = Mock()
+                    mock_handler_instance.process_duplicate_file.side_effect = Exception("Hash calculation failed")
+                    # Also set up the calculate_file_hash method for fallback scenario
+                    mock_handler_instance.calculate_file_hash.return_value = 'fallback_hash_123'
+                    mock_handler_class.return_value = mock_handler_instance
                 
-                with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
-                    mock_storage_config.get_storage_config_dict.return_value = {
-                        'storage_type': 'local',
-                        'local_storage_path': '/tmp'
-                    }
-                    
-                    with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
-                        mock_storage.return_value.upload_file.return_value = Mock(
-                            success=True,
-                            file_path='/tmp/resume.pdf',
-                            file_size=1024,
-                            storage_type='local',
-                            url='http://localhost:5001/files/1'
-                        )
+                    with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
+                        mock_storage_config.get_storage_config_dict.return_value = {
+                            'storage_type': 'local',
+                            'local_storage_path': '/tmp'
+                        }
                         
-                        response = client.post(
-                            '/api/files/upload',
-                            data={
-                                'file': (sample_pdf_file, 'resume.pdf', 'application/pdf'),
-                                'process': 'false'
-                            },
-                            headers={'Authorization': auth_headers['Authorization']}
-                        )
-                        
-                        # Should still succeed with fallback behavior
-                        assert response.status_code == 201
-                        data = json.loads(response.data)
-                        assert data['success'] is True
-                        assert data['file']['duplicate_info']['is_duplicate'] is False
+                        with patch('app.server.FileStorageService') as mock_storage_class:
+                            mock_storage_instance = Mock()
+                            # Create a proper mock object with attribute access
+                            storage_result = Mock()
+                            storage_result.success = True
+                            storage_result.file_path = '/tmp/resume.pdf'
+                            storage_result.file_size = 1024
+                            storage_result.storage_type = 'local'
+                            storage_result.url = 'http://localhost:5001/files/1'
+                            storage_result.s3_bucket = None  # Add missing s3_bucket field
+                            mock_storage_instance.upload_file.return_value = storage_result
+                            mock_storage_class.return_value = mock_storage_instance
+                            
+                            response = client.post(
+                                '/api/files/upload',
+                                data={
+                                    'file': (sample_pdf_file, 'resume.pdf', 'application/pdf'),
+                                    'process': 'false'
+                                },
+                                headers={'Authorization': auth_headers['Authorization']}
+                            )
+                            
+                            # Should still succeed with fallback behavior
+                            assert response.status_code == 201
+                            data = json.loads(response.data)
+                            assert data['success'] is True
+                            assert data['file']['duplicate_info']['is_duplicate'] is False
 
 
 if __name__ == '__main__':
