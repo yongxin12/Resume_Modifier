@@ -87,9 +87,17 @@ class TestEnhancedFileAPI:
     
     def test_enhanced_upload_basic(self, app, client, auth_headers, sample_pdf_file):
         """Test basic file upload without Google Drive integration"""
-        with app.test_request_context():
-            with patch('app.server.request') as mock_request:
-                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
+        with patch('app.utils.jwt_utils.verify_token') as mock_verify_token:
+            # Mock JWT verification to return user data
+            mock_verify_token.return_value = {'user_id': 1, 'email': 'test@example.com'}
+            
+            with patch('app.utils.file_validator.FileValidator') as mock_validator:
+                # Mock file validation to pass
+                mock_validation_result = Mock()
+                mock_validation_result.is_valid = True
+                mock_validation_result.errors = []
+                mock_validation_result.file_size = 1024
+                mock_validator.return_value.validate_file.return_value = mock_validation_result
                 
                 with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
                     mock_handler.return_value.process_duplicate_file.return_value = {
@@ -130,24 +138,24 @@ class TestEnhancedFileAPI:
                             assert data['success'] is True
                             assert 'file' in data
                             assert data['file']['original_filename'] == 'resume.pdf'
-    
+
     def test_enhanced_upload_with_google_drive(self, app, client, auth_headers, sample_pdf_file):
         """Test file upload with Google Drive integration"""
         with app.app_context():
             with patch('app.server.request') as mock_request:
                 mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
             
-            with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
-                mock_handler.return_value.process_duplicate_file.return_value = {
-                    'is_duplicate': False,
-                    'display_filename': 'resume.pdf',
-                    'file_hash': 'abc123',
-                    'notification_message': None,
-                    'duplicate_sequence': None,
-                    'original_file_id': None
-                }
-                
-                with patch('app.services.google_drive_service.GoogleDriveService') as mock_gdrive:
+                with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
+                    mock_handler.return_value.process_duplicate_file.return_value = {
+                        'is_duplicate': False,
+                        'display_filename': 'resume.pdf',
+                        'file_hash': 'abc123',
+                        'notification_message': None,
+                        'duplicate_sequence': None,
+                        'original_file_id': None
+                    }
+                    
+                    with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
                     mock_gdrive.return_value.upload_file_to_drive.return_value = 'drive-file-id-123'
                     mock_gdrive.return_value.convert_to_google_doc.return_value = 'doc-id-456'
                     mock_gdrive.return_value.share_file_with_user.return_value = True
@@ -478,13 +486,13 @@ class TestEnhancedFileAPI:
             with patch('app.server.request') as mock_request:
                 mock_request.user = {'user_id': 2, 'email': 'admin@example.com'}  # Admin user
                 
-                with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
-                    mock_storage_config.get_storage_config_dict.return_value = {
-                        'storage_type': 'local',
-                        'local_storage_path': '/tmp'
-                    }
-                    
-                    with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
+                    with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
+                        mock_storage_config.get_storage_config_dict.return_value = {
+                            'storage_type': 'local',  
+                            'local_storage_path': '/tmp'
+                        }
+                        
+                        with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
                         mock_storage.return_value.delete_file.return_value = Mock(success=True)
                         
                         response = client.delete(
