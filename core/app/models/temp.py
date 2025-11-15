@@ -193,6 +193,14 @@ class ResumeFile(db.Model):
     processing_status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
     processing_error = db.Column(db.Text, nullable=True)  # Error message if processing failed
     
+    # Processing Result Fields (for storing extracted metadata)
+    page_count = db.Column(db.Integer, nullable=True)  # Number of pages in document
+    paragraph_count = db.Column(db.Integer, nullable=True)  # Number of paragraphs
+    language = db.Column(db.String(10), nullable=True)  # Detected language code (e.g., 'en')
+    keywords = db.Column(db.JSON, nullable=True, default=list)  # Extracted keywords as JSON array
+    processing_time = db.Column(db.Float, nullable=True)  # Time taken to process in seconds
+    processing_metadata = db.Column(db.JSON, nullable=True, default=dict)  # Additional processing metadata as JSON
+    
     # Duplicate Handling Fields
     is_duplicate = db.Column(db.Boolean, default=False)  # Whether this is a duplicate file
     duplicate_sequence = db.Column(db.Integer, default=0)  # Sequence number for duplicates (0 = original)
@@ -248,6 +256,12 @@ class ResumeFile(db.Model):
             'extracted_text': self.extracted_text,
             'processing_status': self.processing_status,
             'processing_error': self.processing_error,
+            'page_count': self.page_count,
+            'paragraph_count': self.paragraph_count,
+            'language': self.language,
+            'keywords': self.keywords or [],
+            'processing_time': self.processing_time,
+            'processing_metadata': self.processing_metadata or {},
             'tags': self.tags or [],
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,

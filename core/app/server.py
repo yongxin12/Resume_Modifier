@@ -3054,6 +3054,14 @@ def process_file(file_id):
                 file_record.is_processed = True
                 file_record.processing_error = None  # Clear any previous errors
                 
+                # Store processing metadata
+                file_record.page_count = processing_result.page_count
+                file_record.paragraph_count = processing_result.paragraph_count
+                file_record.language = processing_result.language
+                file_record.keywords = processing_result.keywords or []
+                file_record.processing_time = processing_result.processing_time
+                file_record.processing_metadata = processing_result.metadata or {}
+                
                 # Log successful processing
                 logger.info(f"File {file_id} processed successfully for user {current_user_id}")
                 
