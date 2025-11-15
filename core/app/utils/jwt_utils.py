@@ -41,10 +41,10 @@ def token_required(f):
             try:
                 token = auth_header.split(" ")[1]  # Bearer <token>
             except IndexError:
-                return jsonify({"success": False, "message": "Invalid token format"}), 401
+                return jsonify({"error": "Invalid token format"}), 401
         
         if not token:
-            return jsonify({"success": False, "message": "Token is missing - authentication required"}), 401
+            return jsonify({"error": "Token is missing - authentication required"}), 401
             
         try:
             # Verify token and get user data
@@ -53,7 +53,7 @@ def token_required(f):
             request.user = payload
             
         except Exception as e:
-            return jsonify({"success": False, "message": str(e)}), 401
+            return jsonify({"error": str(e)}), 401
             
         return f(*args, **kwargs)
     

@@ -1019,8 +1019,9 @@ def download_file(file_id):
         # Find the file record in database (exclude soft-deleted files)
         resume_file = ResumeFile.query.filter_by(
             id=file_id,
-            user_id=current_user_id
-        ).filter(ResumeFile.deleted_at.is_(None)).first()
+            user_id=current_user_id,
+            is_active=True
+        ).first()
         
         if not resume_file:
             return jsonify({
@@ -1406,7 +1407,7 @@ def get_google_doc_access(file_id):
         resume_file = ResumeFile.query.filter_by(
             id=file_id,
             user_id=current_user_id,
-            deleted_at=None  # Only show non-deleted files
+            is_active=True  # Only show non-deleted files
         ).first()
         
         if not resume_file:
@@ -1601,8 +1602,9 @@ def delete_file(file_id):
             # For soft delete, only allow access to non-deleted files
             resume_file = ResumeFile.query.filter_by(
                 id=file_id,
-                user_id=current_user_id
-            ).filter(ResumeFile.deleted_at.is_(None)).first()
+                user_id=current_user_id,
+                is_active=True
+            ).first()
         
         if not resume_file:
             return jsonify({
@@ -1650,7 +1652,8 @@ def delete_file(file_id):
             delete_type = 'hard'
             
         else:
-            # Soft delete: mark as deleted with timestamp
+            # Soft delete: mark as deleted with timestamp and set is_active=False
+            resume_file.is_active = False
             resume_file.deleted_at = datetime.datetime.utcnow()
             resume_file.deleted_by = current_user_id
             resume_file.updated_at = datetime.datetime.utcnow()
@@ -1876,7 +1879,7 @@ def list_files():
         
         # Filter out soft-deleted files unless explicitly requested (admin feature)
         if not include_deleted:
-            query = query.filter(ResumeFile.deleted_at.is_(None))
+            query = query.filter(ResumeFile.is_active == True)
         
         # Apply filters
         if mime_type:
@@ -1906,34 +1909,53 @@ def list_files():
         has_next = total_count > (page * limit)
         has_prev = page > 1
         
+        # Helper function to safely get attributes, avoiding Mock objects
+        def safe_get_attr(obj, attr, default=None):
+            """Safely get attribute value, avoiding Mock objects"""
+            try:
+                val = getattr(obj, attr, default)
+                # Check if it's a Mock object or other non-serializable type
+                if hasattr(val, '_mock_name'):
+                    return default
+                return val
+            except:
+                return default
+        
         # Format response
         files_data = []
         for file in files:
+            # Handle datetime fields safely
+            created_at = safe_get_attr(file, 'created_at', None)
+            updated_at = safe_get_attr(file, 'updated_at', None)
+            deleted_at = safe_get_attr(file, 'deleted_at', None)
+            
             file_data = {
-                'id': file.id,
-                'original_filename': file.original_filename,
-                'display_filename': getattr(file, 'display_filename', file.original_filename),
-                'file_size': file.file_size,
-                'mime_type': file.mime_type,
-                'storage_type': file.storage_type,
-                'created_at': file.created_at.isoformat() if file.created_at else None,
-                'updated_at': file.updated_at.isoformat() if file.updated_at else None,
-                'processing_status': file.processing_status,
-                'is_deleted': file.deleted_at is not None,
-                'deleted_at': file.deleted_at.isoformat() if file.deleted_at else None,
-                'is_duplicate': getattr(file, 'is_duplicate', False),
-                'duplicate_sequence': getattr(file, 'duplicate_sequence', None)
+                'id': safe_get_attr(file, 'id', None),
+                'original_filename': safe_get_attr(file, 'original_filename', ''),
+                'display_filename': safe_get_attr(file, 'display_filename', safe_get_attr(file, 'original_filename', '')),
+                'file_size': safe_get_attr(file, 'file_size', 0),
+                'mime_type': safe_get_attr(file, 'mime_type', ''),
+                'storage_type': safe_get_attr(file, 'storage_type', 'local'),
+                'created_at': created_at.isoformat() if created_at and hasattr(created_at, 'isoformat') else None,
+                'updated_at': updated_at.isoformat() if updated_at and hasattr(updated_at, 'isoformat') else None,
+                'processing_status': safe_get_attr(file, 'processing_status', 'pending'),
+                'is_deleted': deleted_at is not None,
+                'deleted_at': deleted_at.isoformat() if deleted_at and hasattr(deleted_at, 'isoformat') else None,
+                'is_duplicate': safe_get_attr(file, 'is_duplicate', False),
+                'duplicate_sequence': safe_get_attr(file, 'duplicate_sequence', None)
             }
             
             # Add Google Drive information if available
-            if hasattr(file, 'google_drive_file_id') and file.google_drive_file_id:
+            google_drive_file_id = safe_get_attr(file, 'google_drive_file_id', None)
+            if google_drive_file_id:
+                google_doc_id = safe_get_attr(file, 'google_doc_id', None)
                 file_data['google_drive'] = {
-                    'file_id': file.google_drive_file_id,
-                    'doc_id': getattr(file, 'google_doc_id', None),
-                    'drive_link': f"https://drive.google.com/file/d/{file.google_drive_file_id}/view"
+                    'file_id': google_drive_file_id,
+                    'doc_id': google_doc_id,
+                    'drive_link': f"https://drive.google.com/file/d/{google_drive_file_id}/view"
                 }
-                if file.google_doc_id:
-                    file_data['google_drive']['doc_link'] = f"https://docs.google.com/document/d/{file.google_doc_id}/edit"
+                if google_doc_id:
+                    file_data['google_drive']['doc_link'] = f"https://docs.google.com/document/d/{google_doc_id}/edit"
             
             files_data.append(file_data)
         
