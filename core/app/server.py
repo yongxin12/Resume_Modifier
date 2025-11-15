@@ -686,19 +686,30 @@ def upload_file():
         duplicate_result = None
         try:
             uploaded_file.seek(0)  # Reset file pointer
+            file_content = uploaded_file.read()
+            file_hash = duplicate_handler.calculate_file_hash(file_content)
+            
             duplicate_result = duplicate_handler.process_duplicate_file(
-                uploaded_file, 
-                current_user_id, 
-                uploaded_file.filename
+                current_user_id,
+                uploaded_file.filename,
+                file_hash,
+                file_content
             )
         except Exception as e:
             error_handler = ErrorHandler()
             current_app.logger.warning(f"Duplicate detection failed: {str(e)}")
             # Fallback: use original filename without duplicate detection
+            uploaded_file.seek(0)  # Reset file pointer for fallback hash calculation
+            try:
+                file_content = uploaded_file.read()
+                file_hash = duplicate_handler.calculate_file_hash(file_content)
+            except:
+                file_hash = 'fallback_hash'
+            
             duplicate_result = {
                 'is_duplicate': False,
                 'display_filename': uploaded_file.filename,
-                'file_hash': 'fallback_hash',
+                'file_hash': file_hash,
                 'notification_message': None,
                 'duplicate_sequence': None,
                 'original_file_id': None
@@ -821,8 +832,7 @@ def upload_file():
         try:
             resume_file = ResumeFile(
                 user_id=current_user_id,
-                original_filename=uploaded_file.filename,
-                display_filename=duplicate_result['display_filename'],
+                original_filename=duplicate_result['display_filename'],  # Use display_filename as the original_filename for duplicates
                 stored_filename=validation_result.sanitized_filename,
                 file_path=storage_result.file_path if storage_result.storage_type == 'local' else storage_result.s3_key,
                 file_size=storage_result.file_size,
@@ -857,7 +867,7 @@ def upload_file():
                     'file_id': resume_file.id,
                     'user_id': resume_file.user_id,
                     'original_filename': resume_file.original_filename,
-                    'display_filename': resume_file.display_filename,
+                    'display_filename': duplicate_result['display_filename'],
                     'stored_filename': resume_file.stored_filename,
                     'file_size': resume_file.file_size,
                     'mime_type': resume_file.mime_type,
@@ -866,6 +876,9 @@ def upload_file():
                     'upload_date': resume_file.created_at.isoformat(),
                     'extracted_text': resume_file.extracted_text,
                     'processing_status': resume_file.processing_status,
+                    'is_processed': resume_file.is_processed,
+                    'file_hash': resume_file.file_hash,
+                    'storage_path': resume_file.file_path,
                     'duplicate_info': {
                         'is_duplicate': resume_file.is_duplicate,
                         'duplicate_sequence': resume_file.duplicate_sequence,

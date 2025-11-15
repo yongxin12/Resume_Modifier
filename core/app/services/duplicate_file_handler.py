@@ -155,7 +155,8 @@ class DuplicateFileHandler:
             
             result = {
                 'is_duplicate': len(existing_files) > 0,
-                'existing_files_count': len(existing_files)
+                'existing_files_count': len(existing_files),
+                'file_hash': file_hash  # Add file_hash to the result
             }
             
             if not existing_files:
