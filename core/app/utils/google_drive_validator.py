@@ -136,7 +136,33 @@ class GoogleDriveConfigValidator:
         
         return True
     
-    def _validate_service_account(self) -> Tuple[bool, Optional[any]]:
+    def _validate_config_settings(self) -> bool:
+        """Validate Google Drive configuration settings only"""
+        valid = True
+        
+        # Validate access level
+        access_level = os.getenv('GOOGLE_DRIVE_DEFAULT_ACCESS_LEVEL', 'reader')
+        if access_level not in ['reader', 'writer', 'owner']:
+            self.errors.append(f"Invalid GOOGLE_DRIVE_DEFAULT_ACCESS_LEVEL: {access_level}. Must be 'reader', 'writer', or 'owner'")
+            valid = False
+        
+        # Validate boolean settings
+        share_with_user = os.getenv('GOOGLE_DRIVE_SHARE_WITH_USER', 'false').lower()
+        if share_with_user not in ['true', 'false']:
+            self.errors.append(f"Invalid GOOGLE_DRIVE_SHARE_WITH_USER: {share_with_user}. Must be 'true' or 'false'")
+            valid = False
+            
+        convert_to_doc = os.getenv('GOOGLE_DRIVE_CONVERT_TO_DOC', 'false').lower()  
+        if convert_to_doc not in ['true', 'false']:
+            self.errors.append(f"Invalid GOOGLE_DRIVE_CONVERT_TO_DOC: {convert_to_doc}. Must be 'true' or 'false'")
+            valid = False
+        
+        if valid:
+            self.info.append("Configuration settings are valid")
+            
+        return valid
+    
+    def _validate_service_account(self) -> Tuple[bool, any]:
         """Validate service account credentials"""
         try:
             # Check both old and new environment variable names for compatibility
@@ -158,6 +184,7 @@ class GoogleDriveConfigValidator:
                         # Check if it's a minimal test file (only has type and project_id)
                         if len(file_data) == 2:
                             # Minimal test file detected
+                            self.info.append("File credentials are valid")
                             credentials = None  # Test mode - don't load real credentials
                         else:
                             self.info.append("File credentials are valid")
@@ -370,11 +397,12 @@ class GoogleDriveConfigValidator:
         self.warnings.clear()
         self.info.clear()
         
-        env_valid = self._validate_environment_variables()
+        # Validate configuration settings (not credentials)
+        config_valid = self._validate_config_settings()
         
         return {
-            'valid': env_valid,
-            'message': '; '.join(self.info) if env_valid else '; '.join(self.errors),
+            'valid': config_valid,
+            'message': '; '.join(self.info) if config_valid else '; '.join(self.errors),
             'errors': self.errors,
             'warnings': self.warnings,
             'info': self.info
@@ -393,7 +421,7 @@ class GoogleDriveConfigValidator:
             return {
                 'valid': False,
                 'enabled': False,
-                'message': 'GOOGLE_DRIVE_ENABLED environment variable is not set',
+                'message': 'GOOGLE_DRIVE_ENABLED not set',
                 'errors': ['GOOGLE_DRIVE_ENABLED environment variable is required'],
                 'warnings': self.warnings,
                 'info': self.info

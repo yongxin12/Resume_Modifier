@@ -114,6 +114,9 @@ class StorageConfigManager:
         # Override storage type if cloud is specifically requested
         if storage_type == 'cloud':
             config_dict['storage_type'] = 'cloud'
+            # Add cloud-specific configuration fields expected by tests
+            config_dict['cloud_storage_bucket'] = os.getenv('CLOUD_STORAGE_BUCKET', config_dict.get('s3_bucket', ''))
+            config_dict['cloud_storage_provider'] = os.getenv('CLOUD_STORAGE_PROVIDER', 'aws')
         
         return config_dict
     

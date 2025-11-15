@@ -491,7 +491,11 @@ class ErrorHandler:
         logger.error(f"Google Drive error [{error_code.value}]: {str(exception)} during {operation}")
         
         # Map error codes to user messages
-        if error_code == ErrorCode.GOOGLE_DRIVE_AUTH_FAILED:
+        if error_code == ErrorCode.GDRIVE_001:
+            message = "Google Drive authentication failed"
+        elif error_code == ErrorCode.GDRIVE_002:
+            message = "Failed to upload file to Google Drive"
+        elif error_code == ErrorCode.GOOGLE_DRIVE_AUTH_FAILED:
             message = "Google Drive authentication failed"
         elif error_code == ErrorCode.GOOGLE_DRIVE_UPLOAD_FAILED:
             message = "Failed to upload file to Google Drive"
@@ -511,7 +515,7 @@ class ErrorHandler:
         }
     
     def handle_duplicate_detection_error(self, error_code: ErrorCode, exception: Exception,
-                                       context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                                       context: Optional[Dict[str, Any]] = None, filename: str = None) -> Dict[str, Any]:
         """
         Handle duplicate detection errors
         
@@ -519,6 +523,7 @@ class ErrorHandler:
             error_code: The error code enum
             exception: The duplicate detection exception
             context: Additional context information
+            filename: The filename involved in the duplicate detection
             
         Returns:
             Dictionary with error response structure
@@ -530,18 +535,23 @@ class ErrorHandler:
         logger.error(f"Duplicate detection error [{error_code.value}]: {str(exception)}")
         
         # Map error codes to user messages
-        if error_code == ErrorCode.DUP_FILE_HASH_FAILED:
+        if error_code == ErrorCode.DUP_001:
             message = "Failed to calculate file hash"
-        elif error_code == ErrorCode.DUP_DATABASE_CHECK_FAILED:
+        elif error_code == ErrorCode.DUP_002:
             message = "Failed to check for duplicate files"
         else:
             message = "Duplicate detection failed"
+        
+        # Build details string
+        details = str(exception)
+        if filename:
+            details = f"filename: {filename}, error: {details}"
         
         return {
             'success': False,
             'error_code': error_code.value,
             'message': message,
-            'details': str(exception),
+            'details': details,
             'context': context
         }
     

@@ -55,7 +55,18 @@ class TestEnhancedFileAPI:
             )
             db.session.add(user)
             db.session.commit()
-            return user
+            # Refresh to ensure the ID is loaded and detach from session to avoid issues
+            db.session.refresh(user)
+            user_id = user.id  # Store the ID before session closes
+            
+        # Return a mock-like object with the ID instead of the detached SQLAlchemy object
+        class MockUser:
+            def __init__(self, user_id):
+                self.id = user_id
+                self.username = "testuser"
+                self.email = "test@example.com"
+                
+        return MockUser(user_id)
     
     @pytest.fixture
     def auth_headers(self, app, test_user):
@@ -74,55 +85,57 @@ class TestEnhancedFileAPI:
         pdf_content = b'%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n/Pages 2 0 R\n>>\nendobj\nxref\n0 2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<<\n/Size 2\n/Root 1 0 R\n>>\nstartxref\n74\n%%EOF'
         return BytesIO(pdf_content)
     
-    def test_enhanced_upload_basic(self, client, auth_headers, sample_pdf_file):
+    def test_enhanced_upload_basic(self, app, client, auth_headers, sample_pdf_file):
         """Test basic file upload without Google Drive integration"""
-        with patch('app.server.request') as mock_request:
-            mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
-            
-            with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
-                mock_handler.return_value.process_duplicate_file.return_value = {
-                    'is_duplicate': False,
-                    'display_filename': 'resume.pdf',
-                    'file_hash': 'abc123',
-                    'notification_message': None,
-                    'duplicate_sequence': None,
-                    'original_file_id': None
-                }
+        with app.test_request_context():
+            with patch('app.server.request') as mock_request:
+                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
                 
-                with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
-                    mock_storage_config.get_storage_config_dict.return_value = {
-                        'storage_type': 'local',
-                        'local_storage_path': '/tmp'
+                with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
+                    mock_handler.return_value.process_duplicate_file.return_value = {
+                        'is_duplicate': False,
+                        'display_filename': 'resume.pdf',
+                        'file_hash': 'abc123',
+                        'notification_message': None,
+                        'duplicate_sequence': None,
+                        'original_file_id': None
                     }
                     
-                    with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
-                        mock_storage.return_value.upload_file.return_value = Mock(
-                            success=True,
-                            file_path='/tmp/resume.pdf',
-                            file_size=1024,
-                            storage_type='local',
-                            url='http://localhost:5001/files/1'
-                        )
+                    with patch('app.utils.storage_config.StorageConfigManager') as mock_storage_config:
+                        mock_storage_config.get_storage_config_dict.return_value = {
+                            'storage_type': 'local',
+                            'local_storage_path': '/tmp'
+                        }
                         
-                        response = client.post(
-                            '/api/files/upload',
-                            data={
-                                'file': (sample_pdf_file, 'resume.pdf', 'application/pdf'),
-                                'process': 'false'
-                            },
-                            headers={'Authorization': auth_headers['Authorization']}
-                        )
-                        
-                        assert response.status_code == 201
-                        data = json.loads(response.data)
-                        assert data['success'] is True
-                        assert 'file' in data
-                        assert data['file']['original_filename'] == 'resume.pdf'
+                        with patch('app.services.file_storage_service.FileStorageService') as mock_storage:
+                            mock_storage.return_value.upload_file.return_value = Mock(
+                                success=True,
+                                file_path='/tmp/resume.pdf',
+                                file_size=1024,
+                                storage_type='local',
+                                url='http://localhost:5001/files/1'
+                            )
+                            
+                            response = client.post(
+                                '/api/files/upload',
+                                data={
+                                    'file': (sample_pdf_file, 'resume.pdf', 'application/pdf'),
+                                    'process': 'false'
+                                },
+                                headers={'Authorization': auth_headers['Authorization']}
+                            )
+                            
+                            assert response.status_code == 201
+                            data = json.loads(response.data)
+                            assert data['success'] is True
+                            assert 'file' in data
+                            assert data['file']['original_filename'] == 'resume.pdf'
     
-    def test_enhanced_upload_with_google_drive(self, client, auth_headers, sample_pdf_file):
+    def test_enhanced_upload_with_google_drive(self, app, client, auth_headers, sample_pdf_file):
         """Test file upload with Google Drive integration"""
-        with patch('app.server.request') as mock_request:
-            mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
+        with app.app_context():
+            with patch('app.server.request') as mock_request:
+                mock_request.user = {'user_id': 1, 'email': 'test@example.com'}
             
             with patch('app.services.duplicate_file_handler.DuplicateFileHandler') as mock_handler:
                 mock_handler.return_value.process_duplicate_file.return_value = {
