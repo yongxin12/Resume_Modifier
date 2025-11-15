@@ -107,30 +107,34 @@ class FileValidator:
             config: Optional configuration dictionary to override defaults
         """
         self.config = self.DEFAULT_CONFIG.copy()
+        
+        # If custom config provided, prioritize it over centralized config
         if config:
             self.config.update(config)
-        
-        # Import and get upload limits from centralized config
-        try:
-            from app.utils.storage_config import StorageConfigManager
-            upload_limits = StorageConfigManager.get_upload_limits()
-            
-            # Override defaults with centralized configuration
-            self.max_file_size_mb = upload_limits['max_file_size'] // (1024 * 1024)  # Convert bytes to MB
-            self.allowed_mime_types = upload_limits['allowed_mime_types']
-            
-            # Map MIME types to extensions
-            mime_to_ext = {
-                'application/pdf': 'pdf',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-                'text/plain': 'txt'
-            }
-            self.allowed_extensions = [mime_to_ext.get(mime, '') for mime in self.allowed_mime_types if mime_to_ext.get(mime)]
-            
-        except ImportError:
-            # Fallback to defaults if storage config not available
+            # Use custom config values directly
             self.max_file_size_mb = self.config['max_file_size_mb']
             self.allowed_extensions = self.config['allowed_extensions']
+        else:
+            # Import and get upload limits from centralized config only if no custom config
+            try:
+                from app.utils.storage_config import StorageConfigManager
+                upload_limits = StorageConfigManager.get_upload_limits()
+                
+                # Override defaults with centralized configuration
+                self.max_file_size_mb = upload_limits['max_file_size'] // (1024 * 1024)  # Convert bytes to MB
+                self.allowed_mime_types = upload_limits['allowed_mime_types']
+                
+                # Map MIME types to extensions
+                mime_to_ext = {
+                    'application/pdf': 'pdf',
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
+                }
+                self.allowed_extensions = [mime_to_ext.get(mime, '') for mime in self.allowed_mime_types if mime_to_ext.get(mime)]
+                
+            except ImportError:
+                # Fallback to defaults if storage config not available
+                self.max_file_size_mb = self.config['max_file_size_mb']
+                self.allowed_extensions = self.config['allowed_extensions']
         
         # Set other properties from config
         self.virus_scanning_enabled = self.config['virus_scanning_enabled']

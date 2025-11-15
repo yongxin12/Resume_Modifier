@@ -162,8 +162,9 @@ class TestResumeFileModel:
             expected_keys = {
                 'id', 'user_id', 'original_filename', 'stored_filename', 'file_size', 'file_size_formatted',
                 'mime_type', 'storage_type', 'file_path', 's3_bucket', 'file_hash', 'is_processed',
-                'extracted_text', 'processing_status', 'processing_error', 'tags', 'is_active',
-                'created_at', 'updated_at'
+                'extracted_text', 'processing_status', 'processing_error', 'page_count', 'paragraph_count',
+                'language', 'keywords', 'processing_time', 'processing_metadata', 'tags', 'is_active',
+                'created_at', 'updated_at', 'google_drive', 'duplicate_info'
             }
             
             assert set(result.keys()) == expected_keys

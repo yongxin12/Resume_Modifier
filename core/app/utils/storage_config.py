@@ -103,8 +103,19 @@ class StorageConfigManager:
         Returns:
             Dict[str, Any]: Configuration dictionary ready for FileStorageService
         """
+        # Check for cloud storage environment variable
+        storage_type = os.getenv('FILE_STORAGE_TYPE', 'local').lower()
+        if storage_type == 'cloud' or os.getenv('STORAGE_TYPE') == 'cloud':
+            storage_type = 'cloud'
+        
         config = StorageConfigManager.get_storage_config()
-        return config.to_dict()
+        config_dict = config.to_dict()
+        
+        # Override storage type if cloud is specifically requested
+        if storage_type == 'cloud':
+            config_dict['storage_type'] = 'cloud'
+        
+        return config_dict
     
     @staticmethod
     def validate_storage_config() -> bool:
@@ -133,7 +144,7 @@ class StorageConfigManager:
             'max_file_size': int(os.getenv('MAX_FILE_SIZE', '10485760')),  # 10MB default
             'allowed_mime_types': os.getenv(
                 'ALLOWED_MIME_TYPES', 
-                'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain'
+                'application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document'
             ).split(','),
             'max_files_per_user': int(os.getenv('MAX_FILES_PER_USER', '100')),
             'upload_timeout': int(os.getenv('UPLOAD_TIMEOUT_SECONDS', '300'))  # 5 minutes default

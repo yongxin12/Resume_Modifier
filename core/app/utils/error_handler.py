@@ -14,6 +14,9 @@ from functools import wraps
 from dataclasses import dataclass
 from enum import Enum
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 
 class ErrorCode(Enum):
     """Standardized error codes for file management operations"""
@@ -466,6 +469,126 @@ class ErrorHandler:
         """Get current timestamp for error responses"""
         from datetime import datetime
         return datetime.utcnow().isoformat() + 'Z'
+    
+    def handle_google_drive_error(self, error_code: ErrorCode, exception: Exception, 
+                                 operation: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Handle Google Drive specific errors with appropriate mapping
+        
+        Args:
+            error_code: The error code enum
+            exception: The Google Drive exception
+            operation: The operation that failed (upload, share, convert, etc.)
+            context: Additional context information
+            
+        Returns:
+            Dictionary with error response structure
+        """
+        if context is None:
+            context = {}
+            
+        # Log the error
+        logger.error(f"Google Drive error [{error_code.value}]: {str(exception)} during {operation}")
+        
+        # Map error codes to user messages
+        if error_code == ErrorCode.GOOGLE_DRIVE_AUTH_FAILED:
+            message = "Google Drive authentication failed"
+        elif error_code == ErrorCode.GOOGLE_DRIVE_UPLOAD_FAILED:
+            message = "Failed to upload file to Google Drive"
+        elif error_code == ErrorCode.GOOGLE_DRIVE_SHARING_FAILED:
+            message = "Failed to share file on Google Drive"
+        elif error_code == ErrorCode.GOOGLE_DRIVE_CONVERSION_FAILED:
+            message = "Failed to convert file on Google Drive"
+        else:
+            message = "Google Drive operation failed"
+        
+        return {
+            'success': False,
+            'error_code': error_code.value,
+            'message': message,
+            'details': f"operation: {operation}",
+            'context': context
+        }
+    
+    def handle_duplicate_detection_error(self, error_code: ErrorCode, exception: Exception,
+                                       context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Handle duplicate detection errors
+        
+        Args:
+            error_code: The error code enum
+            exception: The duplicate detection exception
+            context: Additional context information
+            
+        Returns:
+            Dictionary with error response structure
+        """
+        if context is None:
+            context = {}
+            
+        # Log the error
+        logger.error(f"Duplicate detection error [{error_code.value}]: {str(exception)}")
+        
+        # Map error codes to user messages
+        if error_code == ErrorCode.DUP_FILE_HASH_FAILED:
+            message = "Failed to calculate file hash"
+        elif error_code == ErrorCode.DUP_DATABASE_CHECK_FAILED:
+            message = "Failed to check for duplicate files"
+        else:
+            message = "Duplicate detection failed"
+        
+        return {
+            'success': False,
+            'error_code': error_code.value,
+            'message': message,
+            'details': str(exception),
+            'context': context
+        }
+    
+    def handle_error(self, exception: Exception, message: str, error_code: str,
+                    context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Handle generic errors
+        
+        Args:
+            exception: The exception that occurred
+            message: User-friendly error message
+            error_code: Error code string
+            context: Additional context information
+            
+        Returns:
+            Dictionary with error response structure
+        """
+        if context is None:
+            context = {}
+            
+        # Log the error
+        logger.error(f"Generic error [{error_code}]: {str(exception)}")
+        
+        return {
+            'success': False,
+            'error_code': error_code,
+            'message': message,
+            'details': str(exception),
+            'context': context
+        }
+    
+    def log_warning(self, message: str, warning_code: str,
+                   context: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Log warning messages
+        
+        Args:
+            message: Warning message
+            warning_code: Warning code string
+            context: Additional context information
+        """
+        if context is None:
+            context = {}
+            
+        # Log the warning
+        logger.warning(f"Warning [{warning_code}]: {message}")
+
 
 
 def handle_file_management_errors(f):
@@ -475,30 +598,3 @@ def handle_file_management_errors(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         error_handler = ErrorHandler()
-        try:
-            return f(*args, **kwargs)
-        except FileManagementError as e:
-            return error_handler.create_error_response(
-                e.error_detail.code,
-                e.error_detail.context,
-                e.error_detail.user_message
-            )
-        except ValueError as e:
-            if "storage configuration" in str(e).lower():
-                return error_handler.handle_exception(e, ErrorCode.STORAGE_CONFIG_ERROR)
-            else:
-                return error_handler.handle_exception(e, ErrorCode.INVALID_REQUEST)
-        except FileNotFoundError as e:
-            return error_handler.handle_exception(e, ErrorCode.RECORD_NOT_FOUND)
-        except PermissionError as e:
-            return error_handler.handle_exception(e, ErrorCode.ACCESS_DENIED)
-        except TimeoutError as e:
-            return error_handler.handle_exception(e, ErrorCode.PROCESSING_TIMEOUT)
-        except Exception as e:
-            return error_handler.handle_exception(e, ErrorCode.INTERNAL_ERROR)
-    
-    return decorated_function
-
-
-# Global error handler instance
-error_handler = ErrorHandler('file_management')

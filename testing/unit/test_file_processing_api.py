@@ -42,11 +42,11 @@ class TestFileProcessingAPI:
                  patch('app.services.file_storage_service.FileStorageService.download_file') as mock_download, \
                  patch.object(db.session, 'commit') as mock_commit:
                 
-                # Mock database query
+                # Mock database query - need to chain filter_by().filter().first()
                 mock_file = Mock()
                 for key, value in self.test_file_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
                 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -80,12 +80,14 @@ class TestFileProcessingAPI:
                 assert mock_file.processing_status == 'completed'
                 assert mock_file.extracted_text is not None
                 assert mock_file.page_count == 2
-                assert mock_commit.call_count == 2  # Called twice: once to set processing, once after completion    def test_process_file_not_found(self, app, client, authenticated_headers):
+                assert mock_commit.call_count == 2  # Called twice: once to set processing, once after completion
+
+    def test_process_file_not_found(self, app, client, authenticated_headers):
         """Test processing request for non-existent file"""
         with app.app_context():
             with patch('app.models.temp.ResumeFile.query') as mock_query:
                 # Mock database query returning None
-                mock_query.filter_by.return_value.first.return_value = None
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = None
                 
                 response = client.post(
                     '/api/files/999/process',
@@ -102,7 +104,7 @@ class TestFileProcessingAPI:
         with app.app_context():
             with patch('app.models.temp.ResumeFile.query') as mock_query:
                 # Mock no file found (file owned by different user gets filtered out)
-                mock_query.filter_by.return_value.first.return_value = None
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = None
                 
                 response = client.post(
                     '/api/files/123/process',
@@ -144,7 +146,7 @@ class TestFileProcessingAPI:
                 test_record['extracted_text'] = 'Already extracted text'
                 for key, value in test_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
                 
                 response = client.post(
                     '/api/files/123/process',
@@ -166,7 +168,7 @@ class TestFileProcessingAPI:
                 test_record['processing_status'] = 'processing'
                 for key, value in test_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
                 
                 response = client.post(
                     '/api/files/123/process',
@@ -190,7 +192,7 @@ class TestFileProcessingAPI:
                 mock_file = Mock()
                 for key, value in self.test_file_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -241,7 +243,7 @@ class TestFileProcessingAPI:
                 mock_file = Mock()
                 for key, value in self.test_file_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock processing service success
                 from app.services.file_processing_service import ProcessingResult
@@ -279,7 +281,7 @@ class TestFileProcessingAPI:
                 docx_record['mime_type'] = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
                 for key, value in docx_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -322,7 +324,7 @@ class TestFileProcessingAPI:
                 mock_file = Mock()
                 for key, value in self.test_file_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -365,7 +367,7 @@ class TestFileProcessingAPI:
                 mock_file = Mock()
                 for key, value in self.test_file_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -412,7 +414,7 @@ class TestFileProcessingAPI:
                 test_record['extracted_text'] = 'Old extracted text'
                 for key, value in test_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -459,7 +461,7 @@ class TestFileProcessingAPI:
                 unsupported_record['original_filename'] = 'photo.jpg'
                 for key, value in unsupported_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
@@ -498,7 +500,7 @@ class TestFileProcessingAPI:
                 mock_file = Mock()
                 for key, value in self.test_file_record.items():
                     setattr(mock_file, key, value)
-                mock_query.filter_by.return_value.first.return_value = mock_file
+                mock_query.filter_by.return_value.filter.return_value.first.return_value = mock_file
 
                 # Mock storage service download
                 from app.services.file_storage_service import StorageResult
