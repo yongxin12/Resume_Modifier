@@ -4,7 +4,12 @@ Comprehensive test fixtures for TDD approach
 
 import pytest
 import os
+import sys
 from unittest.mock import Mock, patch, MagicMock
+
+# Add core directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'core'))
+
 from app import create_app
 from app.extensions import db
 from app.models.temp import User, Resume, ResumeTemplate, GoogleAuth, GeneratedDocument, ResumeFile, PasswordResetToken
