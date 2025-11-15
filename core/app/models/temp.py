@@ -26,7 +26,7 @@ class User(db.Model):
 
     resumes = db.relationship('Resume', back_populates='user', lazy='dynamic')
     job_descriptions = db.relationship('JobDescription', back_populates='user', lazy='dynamic')
-    resume_files = db.relationship('ResumeFile', back_populates='user', lazy='dynamic')
+    resume_files = db.relationship('ResumeFile', foreign_keys='ResumeFile.user_id', back_populates='user', lazy='dynamic')
 
     updated_at = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False)
@@ -209,7 +209,7 @@ class ResumeFile(db.Model):
     
     # Relationships
     user = db.relationship('User', foreign_keys=[user_id], back_populates='resume_files')
-    deleted_by_user = db.relationship('User', foreign_keys=[deleted_by])
+    deleted_by_user = db.relationship('User', foreign_keys=[deleted_by], backref='deleted_files')
     original_file = db.relationship('ResumeFile', remote_side=[id], backref='duplicates')
     
     # Constraints and Indexes
