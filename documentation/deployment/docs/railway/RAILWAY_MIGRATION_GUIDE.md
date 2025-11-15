@@ -49,6 +49,7 @@ railway variables --service Postgres | grep DATABASE_PUBLIC_URL
 
 # 3. Copy the DATABASE_PUBLIC_URL value and run:
 DATABASE_URL="<paste-public-url-here>" flask db upgrade
+DATABASE_URL="postgresql://postgres:IEAChRNbxjHiLfxsFfoodmTWgxFDxSmV@shinkansen.proxy.rlwy.net:52352/railway" flask db upgrade
 ```
 
 ### **Solution 2: Trigger Migration via Railway Deployment**
