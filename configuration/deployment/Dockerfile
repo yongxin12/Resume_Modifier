@@ -10,14 +10,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY configuration/application/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
 
 # Copy the entrypoint script
-COPY app/docker-entrypoint.sh /usr/local/bin/
+COPY core/app/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Set environment variables
@@ -25,4 +25,4 @@ ENV PYTHONPATH=/app
 
 # Use the entrypoint script
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python", "wsgi.py"]
+CMD ["python", "/app/scripts/wsgi.py"]

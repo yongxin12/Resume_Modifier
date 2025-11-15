@@ -2,21 +2,24 @@ version: '3.8'
 
 services:
   web:
-    build: .
+    build:
+      context: ../..
+      dockerfile: configuration/deployment/Dockerfile
     ports:
       - "5001:5001"
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/resume_app
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - JWT_SECRET=${JWT_SECRET}
-      - FLASK_APP=app.server
+      - FLASK_APP=core.app.server
       - FLASK_ENV=development
       - FLASK_DEBUG=1
       - DB_HOST=db
+      - PYTHONPATH=/app/core
     depends_on:
       - db
     volumes:
-      - .:/app
+      - ../..:/app
 
   db:
     image: postgres:15
