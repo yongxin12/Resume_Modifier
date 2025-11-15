@@ -384,7 +384,7 @@ class TestFileValidator:
         # Test default configuration
         assert 'pdf' in validator.allowed_extensions
         assert 'docx' in validator.allowed_extensions
-        assert validator.max_file_size_mb == 50  # Default 50MB
+        assert validator.max_file_size_mb == 10  # Default 10MB from storage config
         assert validator.virus_scanning_enabled is False  # Default disabled
         
     def test_custom_configuration(self):

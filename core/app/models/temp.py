@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import os
 import hashlib
 import secrets
+from sqlalchemy import event
 
 
 
@@ -171,7 +172,7 @@ class ResumeFile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     original_filename = db.Column(db.String(255), nullable=False)
-    display_filename = db.Column(db.String(255), nullable=False)  # Filename shown to user (with duplicate info)
+    display_filename = db.Column(db.String(255), nullable=True)  # Filename shown to user (with duplicate info)
     stored_filename = db.Column(db.String(255), nullable=False, unique=True)
     file_size = db.Column(db.Integer, nullable=False)
     mime_type = db.Column(db.String(100), nullable=False, default='application/octet-stream')
@@ -323,6 +324,15 @@ class ResumeFile(db.Model):
         name, ext = os.path.splitext(self.original_filename)
         return f"{name} ({self.duplicate_sequence}){ext}"
     
+    def set_display_filename_if_empty(self):
+        """Set display_filename if it's empty or None."""
+        if not self.display_filename:
+            if not self.is_duplicate or self.duplicate_sequence == 0:
+                self.display_filename = self.original_filename
+            else:
+                name, ext = os.path.splitext(self.original_filename)
+                self.display_filename = f"{name} ({self.duplicate_sequence}){ext}"
+    
     def soft_delete(self, deleted_by_user_id: int):
         """Mark file as soft deleted."""
         self.is_active = False
@@ -370,6 +380,14 @@ class ResumeFile(db.Model):
     
     def __repr__(self):
         return f'<ResumeFile {self.original_filename} (User: {self.user_id})>'
+
+
+# Event listener to automatically set display_filename if it's None
+@event.listens_for(ResumeFile, 'before_insert')
+def set_display_filename_before_insert(mapper, connection, target):
+    """Automatically set display_filename before inserting if it's None."""
+    if target.display_filename is None:
+        target.set_display_filename_if_empty()
 
 
 class PasswordResetToken(db.Model):
