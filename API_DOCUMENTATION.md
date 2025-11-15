@@ -3,15 +3,29 @@
 ## Overview
 The Resume Editor API provides AI-powered resume parsing, analysis, and scoring functionality. Built with Flask and OpenAI, it helps users optimize their resumes for job applications.
 
+**Enhanced File Management Features:**
+- Duplicate file detection with intelligent naming
+- Google Drive integration with automatic sharing
+- Soft deletion with restoration capabilities
+- Comprehensive error handling and notifications
+
 ## Base URL
 ```
 http://localhost:5001
 ```
 
-## Swagger/OpenAPI Documentation
+## Documentation Resources
+
+### Swagger/OpenAPI Documentation
 Interactive API documentation is available at:
 ```
 http://localhost:5001/apidocs
+```
+
+### Enhanced File Management API
+For detailed documentation of the enhanced file management features, see:
+```
+docs/ENHANCED_API_DOCUMENTATION.md
 ```
 
 ---

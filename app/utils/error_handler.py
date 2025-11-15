@@ -8,7 +8,7 @@ Date: October 2024
 
 import logging
 import traceback
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from flask import jsonify, Response
 from functools import wraps
 from dataclasses import dataclass
@@ -50,6 +50,24 @@ class ErrorCode(Enum):
     RECORD_NOT_FOUND = "DB_002"
     RECORD_ALREADY_EXISTS = "DB_003"
     DATABASE_CONNECTION_ERROR = "DB_004"
+    
+    # Google Drive Integration
+    GOOGLE_DRIVE_CONFIG_ERROR = "GDRIVE_001"
+    GOOGLE_DRIVE_AUTH_FAILED = "GDRIVE_002"
+    GOOGLE_DRIVE_QUOTA_EXCEEDED = "GDRIVE_003"
+    GOOGLE_DRIVE_UPLOAD_FAILED = "GDRIVE_004"
+    GOOGLE_DRIVE_SHARING_FAILED = "GDRIVE_005"
+    GOOGLE_DRIVE_CONVERSION_FAILED = "GDRIVE_006"
+    GOOGLE_DRIVE_SERVICE_UNAVAILABLE = "GDRIVE_007"
+    
+    # Duplicate Detection
+    DUPLICATE_DETECTION_FAILED = "DUP_001"
+    DUPLICATE_HASH_COLLISION = "DUP_002"
+    
+    # Soft Deletion
+    FILE_ALREADY_DELETED = "DEL_001"
+    FILE_NOT_DELETED = "DEL_002"
+    RESTORE_FAILED = "DEL_003"
     
     # General
     INVALID_REQUEST = "GEN_001"
@@ -182,6 +200,85 @@ class ErrorHandler:
             user_message="The request contains invalid data. Please check your input and try again",
             http_status=400
         ),
+        
+        # Google Drive Integration Errors
+        ErrorCode.GOOGLE_DRIVE_CONFIG_ERROR: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_CONFIG_ERROR,
+            message="Google Drive configuration error",
+            user_message="Google Drive integration is not properly configured. Your file has been saved locally.",
+            http_status=500,
+            log_level="CRITICAL"
+        ),
+        ErrorCode.GOOGLE_DRIVE_AUTH_FAILED: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_AUTH_FAILED,
+            message="Google Drive authentication failed",
+            user_message="Unable to connect to Google Drive. Your file has been saved locally.",
+            http_status=503
+        ),
+        ErrorCode.GOOGLE_DRIVE_QUOTA_EXCEEDED: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_QUOTA_EXCEEDED,
+            message="Google Drive API quota exceeded",
+            user_message="Google Drive is temporarily unavailable due to high usage. Your file has been saved locally.",
+            http_status=503
+        ),
+        ErrorCode.GOOGLE_DRIVE_UPLOAD_FAILED: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_UPLOAD_FAILED,
+            message="Failed to upload file to Google Drive",
+            user_message="Couldn't upload to Google Drive, but your file has been saved locally.",
+            http_status=500
+        ),
+        ErrorCode.GOOGLE_DRIVE_SHARING_FAILED: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_SHARING_FAILED,
+            message="Failed to share Google Drive file with user",
+            user_message="Your file was uploaded to Google Drive but couldn't be shared automatically. You can access it from your file dashboard.",
+            http_status=500
+        ),
+        ErrorCode.GOOGLE_DRIVE_CONVERSION_FAILED: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_CONVERSION_FAILED,
+            message="Failed to convert file to Google Docs format",
+            user_message="Your file was uploaded to Google Drive but couldn't be converted to an editable document.",
+            http_status=500
+        ),
+        ErrorCode.GOOGLE_DRIVE_SERVICE_UNAVAILABLE: ErrorDetail(
+            code=ErrorCode.GOOGLE_DRIVE_SERVICE_UNAVAILABLE,
+            message="Google Drive service is temporarily unavailable",
+            user_message="Google Drive is temporarily unavailable. Your file has been saved locally and will be synced when the service is restored.",
+            http_status=503
+        ),
+        
+        # Duplicate Detection Errors
+        ErrorCode.DUPLICATE_DETECTION_FAILED: ErrorDetail(
+            code=ErrorCode.DUPLICATE_DETECTION_FAILED,
+            message="Duplicate detection service failed",
+            user_message="Unable to check for duplicate files. Your file has been uploaded successfully.",
+            http_status=500
+        ),
+        ErrorCode.DUPLICATE_HASH_COLLISION: ErrorDetail(
+            code=ErrorCode.DUPLICATE_HASH_COLLISION,
+            message="Hash collision detected during duplicate processing",
+            user_message="There was an issue processing your file for duplicates. Your file has been saved with a unique name.",
+            http_status=500
+        ),
+        
+        # Soft Deletion Errors
+        ErrorCode.FILE_ALREADY_DELETED: ErrorDetail(
+            code=ErrorCode.FILE_ALREADY_DELETED,
+            message="File is already deleted",
+            user_message="This file has already been deleted.",
+            http_status=400
+        ),
+        ErrorCode.FILE_NOT_DELETED: ErrorDetail(
+            code=ErrorCode.FILE_NOT_DELETED,
+            message="File is not in deleted state",
+            user_message="This file is not deleted and cannot be restored.",
+            http_status=400
+        ),
+        ErrorCode.RESTORE_FAILED: ErrorDetail(
+            code=ErrorCode.RESTORE_FAILED,
+            message="Failed to restore deleted file",
+            user_message="Unable to restore the file. Please try again or contact support.",
+            http_status=500
+        ),
     }
     
     def __init__(self, logger_name: str = __name__):
@@ -263,6 +360,93 @@ class ErrorHandler:
         context['exception_type'] = type(e).__name__
         
         return self.create_error_response(error_code, context)
+    
+    def handle_google_drive_error(self, exception: Exception, operation: str = "unknown", 
+                                  context: Optional[Dict[str, Any]] = None) -> Tuple[Response, int]:
+        """
+        Handle Google Drive specific errors with appropriate mapping
+        
+        Args:
+            exception: The Google Drive exception
+            operation: The operation that failed (upload, share, convert, etc.)
+            context: Additional context information
+            
+        Returns:
+            Tuple of (Flask Response, HTTP status code)
+        """
+        if context is None:
+            context = {}
+        context['operation'] = operation
+        
+        # Map Google Drive exceptions to error codes
+        error_code = ErrorCode.GOOGLE_DRIVE_SERVICE_UNAVAILABLE
+        
+        if hasattr(exception, 'resp') and hasattr(exception.resp, 'status'):
+            status = exception.resp.status
+            if status == 403:
+                error_code = ErrorCode.GOOGLE_DRIVE_AUTH_FAILED
+            elif status == 429:
+                error_code = ErrorCode.GOOGLE_DRIVE_QUOTA_EXCEEDED
+            elif status == 404:
+                error_code = ErrorCode.GOOGLE_DRIVE_SERVICE_UNAVAILABLE
+        elif "quota" in str(exception).lower():
+            error_code = ErrorCode.GOOGLE_DRIVE_QUOTA_EXCEEDED
+        elif "auth" in str(exception).lower() or "permission" in str(exception).lower():
+            error_code = ErrorCode.GOOGLE_DRIVE_AUTH_FAILED
+        elif "upload" in operation.lower():
+            error_code = ErrorCode.GOOGLE_DRIVE_UPLOAD_FAILED
+        elif "share" in operation.lower():
+            error_code = ErrorCode.GOOGLE_DRIVE_SHARING_FAILED
+        elif "convert" in operation.lower():
+            error_code = ErrorCode.GOOGLE_DRIVE_CONVERSION_FAILED
+        
+        return self.handle_exception(exception, error_code, context)
+    
+    def handle_duplicate_detection_error(self, exception: Exception, 
+                                       context: Optional[Dict[str, Any]] = None) -> Tuple[Response, int]:
+        """
+        Handle duplicate detection errors
+        
+        Args:
+            exception: The duplicate detection exception
+            context: Additional context information
+            
+        Returns:
+            Tuple of (Flask Response, HTTP status code)
+        """
+        error_code = ErrorCode.DUPLICATE_DETECTION_FAILED
+        
+        if "hash" in str(exception).lower() and "collision" in str(exception).lower():
+            error_code = ErrorCode.DUPLICATE_HASH_COLLISION
+        
+        return self.handle_exception(exception, error_code, context)
+    
+    def create_success_response_with_warnings(self, message: str, data: Optional[Dict[str, Any]] = None,
+                                            warnings: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Create a success response that includes warnings for partial failures
+        
+        Args:
+            message: Success message
+            data: Response data
+            warnings: List of warning messages
+            
+        Returns:
+            Success response dictionary with warnings
+        """
+        response = {
+            'success': True,
+            'message': message,
+            'timestamp': self._get_timestamp()
+        }
+        
+        if data:
+            response.update(data)
+        
+        if warnings:
+            response['warnings'] = warnings
+        
+        return response
     
     def _get_timestamp(self) -> str:
         """Get current timestamp for error responses"""

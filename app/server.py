@@ -12,6 +12,7 @@ from app.services.google_docs_service import GoogleDocsService
 from app.services.google_drive_service import GoogleDriveService
 from app.services.duplicate_file_handler import DuplicateFileHandler
 from app.services.pdf_generator import PDFGenerator
+from app.utils.error_handler import ErrorHandler, ErrorCode
 from app.response_template.resume_schema import RESUME_TEMPLATE
 from app.models.temp import User, Resume, JobDescription, GoogleAuth, ResumeTemplate, GeneratedDocument, ResumeFile
 from app.utils.feedback_validator import FeedbackValidator
@@ -682,12 +683,26 @@ def upload_file():
             }), 400
         
         # Process duplicate file detection
-        uploaded_file.seek(0)  # Reset file pointer
-        duplicate_result = duplicate_handler.process_duplicate_file(
-            uploaded_file, 
-            current_user_id, 
-            uploaded_file.filename
-        )
+        duplicate_result = None
+        try:
+            uploaded_file.seek(0)  # Reset file pointer
+            duplicate_result = duplicate_handler.process_duplicate_file(
+                uploaded_file, 
+                current_user_id, 
+                uploaded_file.filename
+            )
+        except Exception as e:
+            error_handler = ErrorHandler()
+            current_app.logger.warning(f"Duplicate detection failed: {str(e)}")
+            # Fallback: use original filename without duplicate detection
+            duplicate_result = {
+                'is_duplicate': False,
+                'display_filename': uploaded_file.filename,
+                'file_hash': 'fallback_hash',
+                'notification_message': None,
+                'duplicate_sequence': None,
+                'original_file_id': None
+            }
         
         # Upload file to storage using the display filename from duplicate processing
         uploaded_file.seek(0)  # Reset file pointer
@@ -710,6 +725,7 @@ def upload_file():
         google_drive_info = None
         
         # Handle Google Drive upload if requested
+        google_drive_warnings = []
         if upload_to_google_drive:
             try:
                 google_drive_service = GoogleDriveService()
@@ -727,29 +743,37 @@ def upload_file():
                     
                     # Convert to Google Doc if requested and file is PDF
                     if convert_to_doc and uploaded_file.content_type == 'application/pdf':
-                        doc_id = google_drive_service.convert_to_google_doc(drive_file_id)
-                        if doc_id:
-                            google_doc_id = doc_id
+                        try:
+                            doc_id = google_drive_service.convert_to_google_doc(drive_file_id)
+                            if doc_id:
+                                google_doc_id = doc_id
+                        except Exception as conv_e:
+                            current_app.logger.warning(f"Google Doc conversion failed: {str(conv_e)}")
+                            google_drive_warnings.append("File uploaded to Google Drive but couldn't be converted to Google Doc")
                     
                     # Share with user if requested and email is available
                     if share_with_user and current_user_email:
-                        google_drive_service.share_file_with_user(
-                            google_drive_file_id, 
-                            current_user_email, 
-                            'writer'
-                        )
-                        if google_doc_id:
+                        try:
                             google_drive_service.share_file_with_user(
-                                google_doc_id, 
+                                google_drive_file_id, 
                                 current_user_email, 
                                 'writer'
                             )
+                            if google_doc_id:
+                                google_drive_service.share_file_with_user(
+                                    google_doc_id, 
+                                    current_user_email, 
+                                    'writer'
+                                )
+                        except Exception as share_e:
+                            current_app.logger.warning(f"Google Drive sharing failed: {str(share_e)}")
+                            google_drive_warnings.append("File uploaded to Google Drive but couldn't be shared automatically")
                     
                     # Prepare Google Drive info for response
                     google_drive_info = {
                         'file_id': google_drive_file_id,
                         'drive_link': f"https://drive.google.com/file/d/{google_drive_file_id}/view",
-                        'is_shared': share_with_user and bool(current_user_email)
+                        'is_shared': share_with_user and bool(current_user_email) and not any("shar" in w.lower() for w in google_drive_warnings)
                     }
                     
                     if google_doc_id:
@@ -757,10 +781,13 @@ def upload_file():
                             'doc_id': google_doc_id,
                             'doc_link': f"https://docs.google.com/document/d/{google_doc_id}/edit"
                         })
+                else:
+                    google_drive_warnings.append("Google Drive upload failed - file saved locally only")
                         
             except Exception as e:
+                error_handler = ErrorHandler()
                 current_app.logger.warning(f"Google Drive upload failed: {str(e)}")
-                # Continue with local upload even if Google Drive fails
+                google_drive_warnings.append("Google Drive temporarily unavailable - file saved locally")
         
         # Initialize processing variables
         extracted_text = None
@@ -855,9 +882,15 @@ def upload_file():
             if google_drive_info:
                 response_data['file']['google_drive'] = google_drive_info
             
-            # Add processing warning if any
+            # Add warnings if any
+            warnings = []
             if processing_warning:
-                response_data['processing_warning'] = processing_warning
+                warnings.append(processing_warning)
+            if google_drive_warnings:
+                warnings.extend(google_drive_warnings)
+            
+            if warnings:
+                response_data['warnings'] = warnings
             
             return jsonify(response_data), 201
             

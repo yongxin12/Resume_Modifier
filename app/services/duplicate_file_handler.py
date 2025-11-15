@@ -21,24 +21,25 @@ class DuplicateFileHandler:
     """Service for handling duplicate file detection and management."""
     
     @staticmethod
-    def calculate_file_hash(file_content: bytes) -> str:
+    def calculate_file_hash(file_content) -> str:
         """
-        Calculate SHA-256 hash of file content.
+        Calculate SHA-256 hash of file content using optimized chunked reading.
         
         Args:
-            file_content: Binary content of the file
+            file_content: Binary content of the file (bytes, BytesIO, or file-like object)
             
         Returns:
             String representation of the file hash
         """
-        sha256_hash = hashlib.sha256()
-        sha256_hash.update(file_content)
-        return sha256_hash.hexdigest()
+        from app.utils.performance_optimizer import OptimizedHashCalculator, performance_monitor
+        
+        with performance_monitor.time_operation("file_hash_calculation"):
+            return OptimizedHashCalculator.calculate_hash_chunked(file_content)
     
     @staticmethod
     def find_existing_files(user_id: int, file_hash: str) -> List[ResumeFile]:
         """
-        Find existing files with the same hash for a user.
+        Find existing files with the same hash for a user using optimized query.
         
         Args:
             user_id: ID of the user
@@ -47,12 +48,16 @@ class DuplicateFileHandler:
         Returns:
             List of existing ResumeFile instances with the same hash
         """
+        from app.utils.performance_optimizer import OptimizedDatabaseQueries, performance_monitor
+        
         try:
-            existing_files = ResumeFile.query.filter_by(
-                user_id=user_id,
-                file_hash=file_hash,
-                is_active=True  # Only consider active files
-            ).order_by(ResumeFile.duplicate_sequence.asc()).all()
+            with performance_monitor.time_operation("duplicate_file_query"):
+                query = OptimizedDatabaseQueries.build_file_query_with_indexes(
+                    user_id=user_id,
+                    include_deleted=False,
+                    file_hash=file_hash
+                )
+                existing_files = query.order_by(ResumeFile.duplicate_sequence.asc()).all()
             
             logger.info(f"Found {len(existing_files)} existing files with hash {file_hash[:16]}... for user {user_id}")
             return existing_files
