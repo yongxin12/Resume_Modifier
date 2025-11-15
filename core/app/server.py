@@ -839,7 +839,8 @@ def upload_file():
         try:
             resume_file = ResumeFile(
                 user_id=current_user_id,
-                original_filename=duplicate_result['display_filename'],  # Use display_filename as the original_filename for duplicates
+                original_filename=uploaded_file.filename,  # Keep actual original filename
+                display_filename=duplicate_result['display_filename'],  # Use display_filename from duplicate handler
                 stored_filename=validation_result.sanitized_filename,
                 file_path=storage_result.file_path if storage_result.storage_type == 'local' else storage_result.s3_key,
                 file_size=storage_result.file_size,
@@ -3050,11 +3051,8 @@ def process_file(file_id):
                 # Update file record with processing results
                 file_record.processing_status = 'completed'
                 file_record.extracted_text = processing_result.text
-                file_record.page_count = processing_result.page_count
-                file_record.metadata = processing_result.metadata
-                file_record.language = processing_result.language
-                file_record.keywords = processing_result.keywords
-                file_record.processing_time = processing_result.processing_time
+                file_record.is_processed = True
+                file_record.processing_error = None  # Clear any previous errors
                 
                 # Log successful processing
                 logger.info(f"File {file_id} processed successfully for user {current_user_id}")
@@ -3068,11 +3066,11 @@ def process_file(file_id):
                         'success': processing_result.success,
                         'text': processing_result.text,
                         'file_type': processing_result.file_type,
-                        'metadata': processing_result.metadata,
+                        'metadata': processing_result.metadata or {},
                         'processing_time': processing_result.processing_time,
                         'page_count': processing_result.page_count,
                         'paragraph_count': processing_result.paragraph_count,
-                        'keywords': processing_result.keywords,
+                        'keywords': processing_result.keywords or [],
                         'language': processing_result.language
                     }
                 }), 200

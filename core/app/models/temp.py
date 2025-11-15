@@ -28,8 +28,8 @@ class User(db.Model):
     job_descriptions = db.relationship('JobDescription', back_populates='user', lazy='dynamic')
     resume_files = db.relationship('ResumeFile', foreign_keys='ResumeFile.user_id', back_populates='user', lazy='dynamic')
 
-    updated_at = db.Column(db.DateTime, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     
     
 
@@ -171,9 +171,10 @@ class ResumeFile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     original_filename = db.Column(db.String(255), nullable=False)
+    display_filename = db.Column(db.String(255), nullable=False)  # Filename shown to user (with duplicate info)
     stored_filename = db.Column(db.String(255), nullable=False, unique=True)
     file_size = db.Column(db.Integer, nullable=False)
-    mime_type = db.Column(db.String(100), nullable=False)
+    mime_type = db.Column(db.String(100), nullable=False, default='application/octet-stream')
     storage_type = db.Column(db.String(50), nullable=False, default='local')  # 'local' or 's3'
     file_path = db.Column(db.String(500), nullable=False)  # Local path or S3 key
     s3_bucket = db.Column(db.String(100), nullable=True)  # S3 bucket name if using S3
@@ -297,6 +298,10 @@ class ResumeFile(db.Model):
     
     def get_display_filename(self) -> str:
         """Get the filename for display to users, including duplicate notation."""
+        # Return stored display_filename if available, otherwise compute it
+        if self.display_filename:
+            return self.display_filename
+        
         if not self.is_duplicate or self.duplicate_sequence == 0:
             return self.original_filename
         
