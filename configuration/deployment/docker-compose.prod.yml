@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    ports:
+      - "5001:5001"
+    network_mode: "host"  # Add this line
+    environment:
+      - DATABASE_URL=mysql+pymysql://mysql:Mintmelon666!@localhost:3306/resume_app
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - FLASK_APP=wsgi.py
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Note: Database is hosted externally at 10.0.0.174
+  # No need to define db service here as it's external 
