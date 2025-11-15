@@ -676,9 +676,15 @@ def upload_file():
         validation_result = file_validator.validate_file(uploaded_file)
         
         if not validation_result.is_valid:
+            # If multiple errors, use generic message; if single error, use specific message
+            if len(validation_result.errors) > 1:
+                main_message = 'File validation failed'
+            else:
+                main_message = validation_result.errors[0] if validation_result.errors else 'File validation failed'
+            
             return jsonify({
                 'success': False,
-                'message': 'File validation failed',
+                'message': main_message,
                 'errors': validation_result.errors
             }), 400
         
@@ -687,7 +693,8 @@ def upload_file():
         try:
             uploaded_file.seek(0)  # Reset file pointer
             file_content = uploaded_file.read()
-            file_hash = duplicate_handler.calculate_file_hash(file_content)
+            # Use validator's file_hash if available, otherwise calculate it
+            file_hash = getattr(validation_result, 'file_hash', None) or duplicate_handler.calculate_file_hash(file_content)
             
             duplicate_result = duplicate_handler.process_duplicate_file(
                 current_user_id,
@@ -899,6 +906,8 @@ def upload_file():
             warnings = []
             if processing_warning:
                 warnings.append(processing_warning)
+                # Also add as top-level key for backward compatibility
+                response_data['processing_warning'] = processing_warning
             if google_drive_warnings:
                 warnings.extend(google_drive_warnings)
             
@@ -1076,11 +1085,14 @@ def download_file(file_id):
         
         # Send the file
         try:
+            # Use the stored MIME type from database, fallback to download result, then default
+            mime_type = resume_file.mime_type or download_result.content_type or 'application/octet-stream'
+            
             return send_file(
                 BytesIO(download_result.content),
                 as_attachment=not inline,
                 download_name=resume_file.original_filename,
-                mimetype=download_result.content_type or 'application/octet-stream'
+                mimetype=mime_type
             )
         except Exception as e:
             return jsonify({
