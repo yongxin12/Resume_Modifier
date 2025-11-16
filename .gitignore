@@ -30,3 +30,15 @@ docker-compose.override.yml
 
 # Keep example file
 !.env.example
+
+# Database backups and exports (may contain sensitive data)
+*.sql
+backup_*.sql
+*_backup.sql
+*.dump
+*.bak
+
+# Sensitive configuration files
+credentials.json
+service-account.json
+*_credentials.json
