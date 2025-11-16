@@ -608,3 +608,45 @@ def handle_file_management_errors(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         error_handler = ErrorHandler()
+        
+        try:
+            return f(*args, **kwargs)
+        except FileManagementError as e:
+            # Handle known file management errors
+            return error_handler.create_error_response(
+                error_code=e.error_detail.code,
+                context=None,  # FileManagementError doesn't have context attribute
+                custom_message=e.error_detail.user_message
+            )
+        except ValueError as e:
+            # Handle storage configuration errors
+            return error_handler.handle_exception(
+                e, ErrorCode.STORAGE_CONFIG_ERROR, 
+                context={'operation': 'file_management', 'error_type': 'ValueError'}
+            )
+        except FileNotFoundError as e:
+            # Handle file not found errors
+            return error_handler.handle_exception(
+                e, ErrorCode.RECORD_NOT_FOUND,  # Use existing error code
+                context={'operation': 'file_management', 'error_type': 'FileNotFoundError'}
+            )
+        except PermissionError as e:
+            # Handle permission errors
+            return error_handler.handle_exception(
+                e, ErrorCode.ACCESS_DENIED,  # Use existing error code
+                context={'operation': 'file_management', 'error_type': 'PermissionError'}
+            )
+        except TimeoutError as e:
+            # Handle timeout errors
+            return error_handler.handle_exception(
+                e, ErrorCode.PROCESSING_TIMEOUT,
+                context={'operation': 'file_management', 'error_type': 'TimeoutError'}
+            )
+        except Exception as e:
+            # Handle unexpected errors
+            return error_handler.handle_exception(
+                e, ErrorCode.INTERNAL_ERROR,  # Use existing error code
+                context={'operation': 'file_management', 'error_type': 'Exception'}
+            )
+    
+    return decorated_function

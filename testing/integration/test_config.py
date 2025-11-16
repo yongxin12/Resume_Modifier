@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 
+import os
+import sys
+
+# Add core directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'core'))
+
 from app import create_app
 
 def test_config():
