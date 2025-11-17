@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'add_file_categorization'
-down_revision = 'previous_migration'  # Update this to the actual previous migration ID
+down_revision = '2e4e6feef93f'  # Points to the enhance_resume_files migration
 branch_labels = None
 depends_on = None
 

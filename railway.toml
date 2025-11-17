@@ -2,8 +2,8 @@
 builder = "nixpacks"
 
 [deploy]
-# Run database migrations and then start the app
-startCommand = "bash -c 'cd core && flask db upgrade && cd .. && python railway_start.py'"
+# Create database tables and start the app
+startCommand = "bash -c 'python scripts/railway_migrate.py && python railway_start.py'"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
