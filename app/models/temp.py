@@ -203,6 +203,11 @@ class ResumeFile(db.Model):
     deleted_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who deleted it
     tags = db.Column(db.JSON, nullable=True, default=list)  # User-defined tags
     
+    # File Organization and Categorization Fields (NEW)
+    category = db.Column(db.String(20), nullable=False, default='active')  # active, archived, draft
+    category_updated_at = db.Column(db.DateTime, nullable=True)  # When category was last changed
+    category_updated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who changed category
+    
     # Timestamps
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -218,6 +223,7 @@ class ResumeFile(db.Model):
         db.CheckConstraint("storage_type in ('local', 's3')", name='check_valid_storage_type'),
         db.CheckConstraint("processing_status in ('pending', 'processing', 'completed', 'failed')", name='check_valid_processing_status'),
         db.CheckConstraint('duplicate_sequence >= 0', name='check_positive_duplicate_sequence'),
+        db.CheckConstraint("category in ('active', 'archived', 'draft')", name='check_valid_category'),
         db.Index('idx_user_created', 'user_id', 'created_at'),
         db.Index('idx_processing_status', 'processing_status'),
         db.Index('idx_active_files', 'is_active'),
@@ -227,9 +233,11 @@ class ResumeFile(db.Model):
         db.Index('idx_google_doc', 'google_doc_id'),
         db.Index('idx_duplicates', 'original_file_id', 'duplicate_sequence'),
         db.Index('idx_deleted_files', 'is_active', 'deleted_at'),
+        db.Index('idx_category', 'user_id', 'category', 'is_active'),  # For category filtering
+        db.Index('idx_category_updated', 'category_updated_at'),  # For category tracking
     )
     
-    def to_dict(self, include_google_drive=True, include_duplicates=True) -> Dict[str, Any]:
+    def to_dict(self, include_google_drive=True, include_duplicates=True, include_category=True) -> Dict[str, Any]:
         """Convert model instance to dictionary for JSON serialization."""
         result = {
             'id': self.id,
@@ -252,6 +260,12 @@ class ResumeFile(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+        
+        # Add category information if requested
+        if include_category:
+            result['category'] = self.category
+            result['category_updated_at'] = self.category_updated_at.isoformat() if self.category_updated_at else None
+            result['category_updated_by'] = self.category_updated_by
         
         # Add Google Drive information if requested
         if include_google_drive:
@@ -348,6 +362,143 @@ class ResumeFile(db.Model):
         if user_id:
             query = query.filter_by(user_id=user_id)
         return query
+    
+    # Category Management Methods (NEW)
+    def update_category(self, new_category: str, updated_by_user_id: int) -> bool:
+        """
+        Update file category with validation and tracking.
+        
+        Args:
+            new_category: New category ('active', 'archived', 'draft')
+            updated_by_user_id: ID of user making the change
+            
+        Returns:
+            bool: True if update successful, False otherwise
+        """
+        valid_categories = ['active', 'archived', 'draft']
+        if new_category not in valid_categories:
+            return False
+        
+        if self.category != new_category:
+            self.category = new_category
+            self.category_updated_at = datetime.utcnow()
+            self.category_updated_by = updated_by_user_id
+            return True
+        return True  # No change needed, but not an error
+    
+    @classmethod
+    def get_files_by_category(cls, user_id: int, category: str = None):
+        """
+        Get active files filtered by category.
+        
+        Args:
+            user_id: ID of the user
+            category: Category to filter by ('active', 'archived', 'draft') or None for all
+            
+        Returns:
+            SQLAlchemy query object
+        """
+        query = cls.query.filter_by(user_id=user_id, is_active=True)
+        if category and category != 'all':
+            query = query.filter_by(category=category)
+        return query
+    
+    @classmethod
+    def get_category_statistics(cls, user_id: int) -> Dict[str, Any]:
+        """
+        Get file count statistics by category for a user.
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            dict: Statistics including counts and percentages by category
+        """
+        from sqlalchemy import func
+        
+        # Get counts by category for active files
+        category_counts = db.session.query(
+            cls.category,
+            func.count(cls.id).label('count')
+        ).filter_by(
+            user_id=user_id,
+            is_active=True
+        ).group_by(cls.category).all()
+        
+        # Get total counts
+        total_active = cls.query.filter_by(user_id=user_id, is_active=True).count()
+        total_deleted = cls.query.filter_by(user_id=user_id, is_active=False).count()
+        
+        # Build statistics dictionary
+        categories = {}
+        for category, count in category_counts:
+            percentage = (count / total_active * 100) if total_active > 0 else 0
+            categories[category] = {
+                'count': count,
+                'percentage': round(percentage, 1)
+            }
+        
+        # Ensure all categories are represented
+        for cat in ['active', 'archived', 'draft']:
+            if cat not in categories:
+                categories[cat] = {'count': 0, 'percentage': 0.0}
+        
+        return {
+            'categories': categories,
+            'total_files': total_active + total_deleted,
+            'total_active_files': total_active,
+            'total_deleted_files': total_deleted,
+            'last_updated': datetime.utcnow().isoformat()
+        }
+    
+    @classmethod
+    def bulk_update_category(cls, user_id: int, file_ids: List[int], new_category: str, updated_by_user_id: int) -> Dict[str, Any]:
+        """
+        Update category for multiple files belonging to a user.
+        
+        Args:
+            user_id: ID of the user (for security validation)
+            file_ids: List of file IDs to update
+            new_category: New category to assign
+            updated_by_user_id: ID of user making the change
+            
+        Returns:
+            dict: Summary of successful and failed updates
+        """
+        valid_categories = ['active', 'archived', 'draft']
+        if new_category not in valid_categories:
+            return {
+                'successful_updates': 0,
+                'failed_updates': len(file_ids),
+                'error': f'Invalid category: {new_category}'
+            }
+        
+        # Get files that belong to the user and are active
+        files = cls.query.filter(
+            cls.id.in_(file_ids),
+            cls.user_id == user_id,
+            cls.is_active == True
+        ).all()
+        
+        successful_updates = []
+        failed_updates = []
+        
+        for file_id in file_ids:
+            file_obj = next((f for f in files if f.id == file_id), None)
+            if file_obj:
+                if file_obj.update_category(new_category, updated_by_user_id):
+                    successful_updates.append(file_obj)
+                else:
+                    failed_updates.append({'id': file_id, 'error': 'Category update failed'})
+            else:
+                failed_updates.append({'id': file_id, 'error': 'File not found or access denied'})
+        
+        return {
+            'successful_updates': len(successful_updates),
+            'failed_updates': len(failed_updates),
+            'updated_files': [f.to_dict(include_google_drive=False, include_duplicates=False) for f in successful_updates],
+            'failed_files': failed_updates
+        }
     
     def __repr__(self):
         return f'<ResumeFile {self.original_filename} (User: {self.user_id})>'

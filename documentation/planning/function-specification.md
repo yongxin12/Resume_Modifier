@@ -37,6 +37,11 @@ The tool aims to serve North American and global job seekers by integrating Data
 | **API-05h** | **Soft Deletion System**                 | As a node administrator or developer, I need to implement soft deletion functionality to preserve all data in case of user errors. | Files are marked as deleted (`is_active=false`) but preserved in database and storage. Admin interface allows restoration of deleted files. |
 | **API-05i** | **Google Doc Link Access**               | As a user, I want to obtain the Google Doc link for uploaded files to make modifications. | `/files/{id}/google-doc` GET endpoint returns Google Doc link with edit permissions for the user to collaborate on their document. |
 | **API-05j** | **Deleted Files Filtering**              | As a user, I do not want to see deleted files. | All file listing APIs automatically filter out soft-deleted files (`is_active=false`) unless admin explicitly requests to see deleted files. |
+| **API-05k** | **File Categorization System**           | As a user, I want to organize my uploaded files into categories (Active, Archived, Draft) for better file management and organization. | Files can be assigned one of three categories: 'active', 'archived', or 'draft'. Category assignment is for organizational purposes only and doesn't affect file functionality. |
+| **API-05l** | **File Category Assignment**             | As a user, I want to assign or change the category of my uploaded files to keep them organized. | `PUT /files/{id}/category` endpoint accepts category parameter and updates file categorization. Validates category is one of: active, archived, draft. |
+| **API-05m** | **File Category Filtering**              | As a user, I want to filter my file listings by category to quickly find files in specific organizational states. | `/files` GET endpoint supports `category` query parameter to filter results by: active, archived, draft, or 'all' for no filtering. |
+| **API-05n** | **Bulk Category Assignment**             | As a user, I want to change the category of multiple files at once for efficient organization. | `PUT /files/category` endpoint accepts array of file_ids and target category, updates multiple files simultaneously with validation. |
+| **API-05o** | **Category Statistics**                  | As a user, I want to see how many files I have in each category to understand my file organization. | `/files/categories/stats` GET endpoint returns count of files in each category plus total file count for the authenticated user. |
 | **API-05a** | **File Download API**                    | As a user, I want to download my stored resume documents in their original format or as PDF.               | `/files/{id}` GET endpoint returns binary file with appropriate content headers for download. Supports format conversion parameter.                |
 | **API-05b** | **File List API**                        | As a user, I want to view all my uploaded resume documents with metadata like size, upload date, and format. | `/files` GET endpoint returns paginated list of user's documents with metadata. Supports sorting, filtering, and search functionality.              |
 | **API-05c** | **File Metadata API**                    | As a user, I want to retrieve detailed information about a specific document including extracted text summary. | `/files/{id}/info` GET endpoint returns comprehensive file metadata including extracted text preview and processing status.                       |
@@ -191,6 +196,11 @@ class ResumeFile(db.Model):
     deleted_at = db.Column(db.DateTime, nullable=True)  # Timestamp when soft deleted
     deleted_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who deleted it
     tags = db.Column(db.JSON, nullable=True, default=list)  # User-defined tags
+    
+    # File Organization and Categorization Fields (NEW)
+    category = db.Column(db.String(20), nullable=False, default='active')  # active, archived, draft
+    category_updated_at = db.Column(db.DateTime, nullable=True)  # When category was last changed
+    category_updated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who changed category
     
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -473,6 +483,241 @@ AWS_S3_BUCKET_NAME=...
 1. **FileStorageService** - Save, retrieve, delete from storage provider
 2. **FileProcessingService** - Extract text, validate, convert formats
 3. **FileMetadataService** - Database operations with pagination and filtering
+4. **FileCategoryService** - Category assignment, validation, and statistics (NEW)
+
+---
+
+### **File Categorization System (NEW)**
+
+#### **Overview**
+File categorization system allows users to organize their uploaded resume files into three predefined categories for better file management and organization. This is a front-end organizational feature that doesn't affect file functionality.
+
+#### **Category Types**
+- **Active**: Frequently used files, ready for immediate use (default)
+- **Archived**: Infrequently used files, stored for reference
+- **Draft**: Work-in-progress files, not yet finalized
+
+#### **Enhanced Database Model Updates**
+The ResumeFile model includes new categorization fields:
+- `category`: VARCHAR(20) NOT NULL DEFAULT 'active'
+- `category_updated_at`: DATETIME NULL (timestamp of last category change)
+- `category_updated_by`: INT NULL (foreign key to users.id)
+
+#### **Category Assignment Workflow (API-05l)**
+```
+PUT /files/{id}/category
+1. Validate user owns the file
+2. Validate category is one of: 'active', 'archived', 'draft'
+3. Update file.category, category_updated_at, category_updated_by
+4. Return updated file metadata with new category
+```
+
+**Request Example:**
+```json
+PUT /files/42/category
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+
+{
+  "category": "archived"
+}
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "File category updated successfully",
+  "file": {
+    "id": 42,
+    "original_filename": "Resume_2024.pdf",
+    "category": "archived",
+    "category_updated_at": "2025-11-16T10:30:00Z",
+    "category_updated_by": 123,
+    "created_at": "2025-11-01T10:30:00Z",
+    "updated_at": "2025-11-16T10:30:00Z"
+  }
+}
+```
+
+#### **Category Filtering Workflow (API-05m)**
+```
+GET /files?category=active&page=1&per_page=20
+1. Validate category parameter (active, archived, draft, or 'all')
+2. Filter files by user_id, is_active=true, and category (if specified)
+3. Apply pagination and sorting
+4. Return filtered file list with metadata
+```
+
+**Request Examples:**
+```
+GET /files?category=active
+GET /files?category=archived&sort_by=created_at&sort_order=desc
+GET /files?category=draft&search=resume
+GET /files?category=all  // No category filtering
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "files": [
+      {
+        "id": 42,
+        "original_filename": "Resume_Active.pdf",
+        "category": "active",
+        "file_size": 524288,
+        "formatted_file_size": "512 KB",
+        "created_at": "2025-11-01T10:30:00Z",
+        "category_updated_at": "2025-11-10T15:20:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "per_page": 20,
+      "total": 8,
+      "total_pages": 1
+    },
+    "filter": {
+      "category": "active"
+    }
+  }
+}
+```
+
+#### **Bulk Category Assignment Workflow (API-05n)**
+```
+PUT /files/category
+1. Validate request contains file_ids array and target category
+2. Verify user owns all specified files
+3. Validate category is one of: 'active', 'archived', 'draft'
+4. Update all files in single transaction
+5. Return summary of successful and failed updates
+```
+
+**Request Example:**
+```json
+PUT /files/category
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+
+{
+  "file_ids": [42, 43, 44],
+  "category": "archived"
+}
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Bulk category update completed",
+  "summary": {
+    "total_requested": 3,
+    "successful_updates": 3,
+    "failed_updates": 0,
+    "category": "archived"
+  },
+  "updated_files": [
+    {
+      "id": 42,
+      "original_filename": "Resume_A.pdf",
+      "category": "archived"
+    },
+    {
+      "id": 43,
+      "original_filename": "Resume_B.pdf", 
+      "category": "archived"
+    },
+    {
+      "id": 44,
+      "original_filename": "Resume_C.pdf",
+      "category": "archived"
+    }
+  ],
+  "failed_files": []
+}
+```
+
+#### **Category Statistics Workflow (API-05o)**
+```
+GET /files/categories/stats
+1. Query database for file counts by category for authenticated user
+2. Calculate totals for active files only (is_active=true)
+3. Return comprehensive statistics
+```
+
+**Response Example (200 OK):**
+```json
+{
+  "success": true,
+  "statistics": {
+    "categories": {
+      "active": {
+        "count": 15,
+        "percentage": 60.0
+      },
+      "archived": {
+        "count": 8,
+        "percentage": 32.0
+      },
+      "draft": {
+        "count": 2,
+        "percentage": 8.0
+      }
+    },
+    "total_files": 25,
+    "total_active_files": 25,
+    "total_deleted_files": 3,
+    "last_updated": "2025-11-16T10:30:00Z"
+  }
+}
+```
+
+#### **Enhanced File Listing Integration**
+The existing `/files` endpoint is enhanced to support category filtering while maintaining backward compatibility:
+
+**Updated Query Parameters:**
+- `category`: Filter by specific category ('active', 'archived', 'draft') or 'all' for no filtering
+- Existing parameters (page, per_page, sort_by, sort_order, search) remain unchanged
+
+**Default Behavior:**
+- If no category parameter is provided, returns all active files (existing behavior)
+- Default category for new uploads remains 'active'
+
+#### **Database Migration Requirements**
+```sql
+-- Add category-related columns to resume_files table
+ALTER TABLE resume_files 
+ADD COLUMN category VARCHAR(20) NOT NULL DEFAULT 'active',
+ADD COLUMN category_updated_at DATETIME NULL,
+ADD COLUMN category_updated_by INT NULL,
+ADD CONSTRAINT fk_category_updated_by FOREIGN KEY (category_updated_by) REFERENCES users(id),
+ADD CONSTRAINT check_valid_category CHECK (category IN ('active', 'archived', 'draft'));
+
+-- Add indexes for efficient category queries
+CREATE INDEX idx_resume_files_category ON resume_files(user_id, category, is_active);
+CREATE INDEX idx_resume_files_category_updated ON resume_files(category_updated_at);
+```
+
+#### **Validation Rules**
+1. **Category Values**: Must be exactly one of: 'active', 'archived', 'draft' (case-sensitive)
+2. **File Ownership**: Users can only categorize their own files
+3. **Active Files Only**: Category changes only apply to active files (is_active=true)
+4. **Concurrent Updates**: Use database-level constraints to prevent invalid states
+
+#### **Error Handling**
+- **Invalid Category**: HTTP 400 with clear validation message
+- **File Not Found**: HTTP 404 for non-existent or inaccessible files
+- **Unauthorized Access**: HTTP 403 for files owned by other users
+- **Bulk Operation Failures**: Partial success responses with detailed error info
+
+#### **Integration Points**
+- **File Upload**: New files default to 'active' category
+- **File Metadata**: Category information included in all file detail responses
+- **Search/Filter**: Category filtering integrated with existing search functionality
+- **Statistics Dashboard**: Category stats available for user dashboard displays
 
 #### **Integration with Resume Scoring (API-07)**
 Score existing uploaded file without re-uploading:
