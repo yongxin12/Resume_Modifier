@@ -512,10 +512,31 @@ PUT /files/{id}/category
 4. Return updated file metadata with new category
 ```
 
+**API Specification:**
+- **Endpoint**: `PUT /files/{id}/category`
+- **Authentication**: Required (Bearer JWT token)
+- **Content-Type**: `application/json`
+
+**Path Parameters:**
+| Parameter | Type | Required | Description | Example |
+|-----------|------|----------|-------------|---------|
+| `id` | integer | Yes | Unique file identifier | `42` |
+
+**Request Headers:**
+| Header | Type | Required | Description | Example |
+|--------|------|----------|-------------|---------|
+| `Authorization` | string | Yes | JWT bearer token | `Bearer eyJ0eXAiOiJKV1Q...` |
+| `Content-Type` | string | Yes | Request content type | `application/json` |
+
+**Request Body Schema:**
+| Field | Type | Required | Validation | Description | Example |
+|-------|------|----------|------------|-------------|---------|
+| `category` | string | Yes | Must be one of: 'active', 'archived', 'draft' | Target category for file | `"archived"` |
+
 **Request Example:**
 ```json
 PUT /files/42/category
-Authorization: Bearer {jwt_token}
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 Content-Type: application/json
 
 {
@@ -549,12 +570,33 @@ GET /files?category=active&page=1&per_page=20
 4. Return filtered file list with metadata
 ```
 
+**API Specification:**
+- **Endpoint**: `GET /files`
+- **Authentication**: Required (Bearer JWT token)
+- **Content-Type**: Not required for GET requests
+
+**Request Headers:**
+| Header | Type | Required | Description | Example |
+|--------|------|----------|-------------|---------|
+| `Authorization` | string | Yes | JWT bearer token | `Bearer eyJ0eXAiOiJKV1Q...` |
+
+**Query Parameters:**
+| Parameter | Type | Required | Default | Validation | Description | Example |
+|-----------|------|----------|---------|------------|-------------|---------|
+| `category` | string | No | null (all files) | 'active', 'archived', 'draft', 'all' | Filter files by category | `active` |
+| `page` | integer | No | 1 | Minimum: 1 | Page number for pagination | `1` |
+| `per_page` | integer | No | 20 | Range: 1-100 | Items per page | `20` |
+| `sort_by` | string | No | 'created_at' | 'created_at', 'updated_at', 'original_filename', 'file_size', 'category' | Field to sort by | `created_at` |
+| `sort_order` | string | No | 'desc' | 'asc', 'desc' | Sort direction | `desc` |
+| `search` | string | No | null | Max length: 255 | Search term for filename filtering | `resume` |
+
 **Request Examples:**
 ```
 GET /files?category=active
 GET /files?category=archived&sort_by=created_at&sort_order=desc
 GET /files?category=draft&search=resume
-GET /files?category=all  // No category filtering
+GET /files?category=all&page=2&per_page=10
+GET /files  // No category filtering (shows all files)
 ```
 
 **Response Example (200 OK):**
@@ -596,10 +638,27 @@ PUT /files/category
 5. Return summary of successful and failed updates
 ```
 
+**API Specification:**
+- **Endpoint**: `PUT /files/category`
+- **Authentication**: Required (Bearer JWT token)
+- **Content-Type**: `application/json`
+
+**Request Headers:**
+| Header | Type | Required | Description | Example |
+|--------|------|----------|-------------|---------|
+| `Authorization` | string | Yes | JWT bearer token | `Bearer eyJ0eXAiOiJKV1Q...` |
+| `Content-Type` | string | Yes | Request content type | `application/json` |
+
+**Request Body Schema:**
+| Field | Type | Required | Validation | Description | Example |
+|-------|------|----------|------------|-------------|---------|
+| `file_ids` | array[integer] | Yes | Non-empty array, max 100 items | Array of file IDs to update | `[42, 43, 44]` |
+| `category` | string | Yes | Must be one of: 'active', 'archived', 'draft' | Target category for all files | `"archived"` |
+
 **Request Example:**
 ```json
 PUT /files/category
-Authorization: Bearer {jwt_token}
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 Content-Type: application/json
 
 {
@@ -646,6 +705,25 @@ GET /files/categories/stats
 1. Query database for file counts by category for authenticated user
 2. Calculate totals for active files only (is_active=true)
 3. Return comprehensive statistics
+```
+
+**API Specification:**
+- **Endpoint**: `GET /files/categories/stats`
+- **Authentication**: Required (Bearer JWT token)
+- **Content-Type**: Not required for GET requests
+
+**Request Headers:**
+| Header | Type | Required | Description | Example |
+|--------|------|----------|-------------|---------|
+| `Authorization` | string | Yes | JWT bearer token | `Bearer eyJ0eXAiOiJKV1Q...` |
+
+**Query Parameters:**
+None - This endpoint returns statistics for the authenticated user automatically.
+
+**Request Example:**
+```
+GET /files/categories/stats
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 ```
 
 **Response Example (200 OK):**

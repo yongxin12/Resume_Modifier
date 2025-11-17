@@ -1,0 +1,858 @@
+openapi: 3.0.3
+info:
+  title: Resume Editor - File Categorization API
+  description: |
+    API for organizing uploaded resume files into categories (Active, Archived, Draft) for better file management.
+    
+    **Categories:**
+    - **Active**: Frequently used files, ready for immediate use (default)
+    - **Archived**: Infrequently used files, stored for reference
+    - **Draft**: Work-in-progress files, not yet finalized
+    
+    All endpoints require JWT authentication via the Authorization header.
+  version: 1.0.0
+  contact:
+    name: Resume Editor API Support
+    url: http://localhost:5001/apidocs
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:5001
+    description: Development server
+  - url: https://api.resumemodifier.com
+    description: Production server
+
+security:
+  - BearerAuth: []
+
+paths:
+  /files/{id}/category:
+    put:
+      tags:
+        - File Categorization
+      summary: Update file category
+      description: Update the category of a single file. Only the file owner can modify categories.
+      operationId: updateFileCategory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique file identifier
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            example: 42
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryUpdateRequest'
+            examples:
+              archive_file:
+                summary: Archive a file
+                value:
+                  category: "archived"
+              make_active:
+                summary: Make file active
+                value:
+                  category: "active"
+              mark_draft:
+                summary: Mark as draft
+                value:
+                  category: "draft"
+      responses:
+        '200':
+          description: File category updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryUpdateResponse'
+              examples:
+                success:
+                  summary: Successful category update
+                  value:
+                    success: true
+                    message: "File category updated successfully"
+                    file:
+                      id: 42
+                      original_filename: "Resume_2024.pdf"
+                      category: "archived"
+                      category_updated_at: "2025-11-16T10:30:00Z"
+                      category_updated_by: 123
+                      created_at: "2025-11-01T10:30:00Z"
+                      updated_at: "2025-11-16T10:30:00Z"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_category:
+                  summary: Invalid category provided
+                  value:
+                    success: false
+                    error: "INVALID_INPUT"
+                    message: "Invalid category 'invalid'. Must be one of: active, archived, draft"
+                    details:
+                      valid_categories: ["active", "archived", "draft"]
+                missing_category:
+                  summary: Missing required category field
+                  value:
+                    success: false
+                    error: "Missing category"
+                    message: "Category field is required"
+                    valid_categories: ["active", "archived", "draft"]
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          description: File not found or access denied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                file_not_found:
+                  summary: File not found
+                  value:
+                    success: false
+                    error: "FILE_NOT_FOUND"
+                    message: "File with ID 42 not found or access denied"
+                    details:
+                      file_id: 42
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /files/category:
+    put:
+      tags:
+        - File Categorization
+      summary: Bulk update file categories
+      description: Update categories for multiple files simultaneously. Maximum 100 files per request.
+      operationId: bulkUpdateCategories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkCategoryUpdateRequest'
+            examples:
+              archive_multiple:
+                summary: Archive multiple files
+                value:
+                  file_ids: [42, 43, 44]
+                  category: "archived"
+              make_all_active:
+                summary: Make multiple files active
+                value:
+                  file_ids: [45, 46, 47, 48]
+                  category: "active"
+      responses:
+        '200':
+          description: Bulk category update completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkCategoryUpdateResponse'
+              examples:
+                full_success:
+                  summary: All files updated successfully
+                  value:
+                    success: true
+                    message: "Bulk category update completed"
+                    summary:
+                      total_requested: 3
+                      successful_updates: 3
+                      failed_updates: 0
+                      category: "archived"
+                    updated_files:
+                      - id: 42
+                        original_filename: "Resume_A.pdf"
+                        category: "archived"
+                      - id: 43
+                        original_filename: "Resume_B.pdf"
+                        category: "archived"
+                      - id: 44
+                        original_filename: "Resume_C.pdf"
+                        category: "archived"
+                    failed_files: []
+                partial_success:
+                  summary: Some files failed to update
+                  value:
+                    success: true
+                    message: "Bulk category update completed"
+                    summary:
+                      total_requested: 3
+                      successful_updates: 2
+                      failed_updates: 1
+                      category: "archived"
+                    updated_files:
+                      - id: 42
+                        original_filename: "Resume_A.pdf"
+                        category: "archived"
+                      - id: 43
+                        original_filename: "Resume_B.pdf"
+                        category: "archived"
+                    failed_files:
+                      - id: 44
+                        error: "File not found or access denied"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_file_ids:
+                  summary: Invalid file IDs format
+                  value:
+                    success: false
+                    error: "Invalid file_ids"
+                    message: "file_ids must be a non-empty array of integers"
+                empty_file_ids:
+                  summary: Empty file IDs array
+                  value:
+                    success: false
+                    error: "INVALID_INPUT"
+                    message: "No file IDs provided"
+                    details:
+                      file_ids: []
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /files:
+    get:
+      tags:
+        - File Categorization
+      summary: List files by category
+      description: |
+        Retrieve files with optional category filtering, pagination, and search.
+        Enhanced version of the standard file listing endpoint with category support.
+      operationId: listFilesByCategory
+      parameters:
+        - name: category
+          in: query
+          description: Filter files by category
+          required: false
+          schema:
+            type: string
+            enum: [active, archived, draft, all]
+            example: active
+        - name: page
+          in: query
+          description: Page number for pagination
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+            example: 1
+        - name: per_page
+          in: query
+          description: Number of items per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+            example: 20
+        - name: sort_by
+          in: query
+          description: Field to sort by
+          required: false
+          schema:
+            type: string
+            enum: [created_at, updated_at, original_filename, file_size, category]
+            default: created_at
+            example: created_at
+        - name: sort_order
+          in: query
+          description: Sort direction
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+            example: desc
+        - name: search
+          in: query
+          description: Search term for filename filtering
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+            example: resume
+      responses:
+        '200':
+          description: Files retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileListResponse'
+              examples:
+                active_files:
+                  summary: List of active files
+                  value:
+                    success: true
+                    data:
+                      files:
+                        - id: 42
+                          original_filename: "Resume_Active.pdf"
+                          category: "active"
+                          file_size: 524288
+                          formatted_file_size: "512 KB"
+                          mime_type: "application/pdf"
+                          created_at: "2025-11-01T10:30:00Z"
+                          updated_at: "2025-11-16T10:30:00Z"
+                          category_updated_at: "2025-11-10T15:20:00Z"
+                          category_updated_by: 123
+                      pagination:
+                        page: 1
+                        per_page: 20
+                        total: 8
+                        total_pages: 1
+                        has_next: false
+                        has_prev: false
+                      filter:
+                        category: "active"
+                        search: null
+                        sort_by: "created_at"
+                        sort_order: "desc"
+        '400':
+          description: Invalid query parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_category:
+                  summary: Invalid category parameter
+                  value:
+                    success: false
+                    error: "INVALID_INPUT"
+                    message: "Invalid category 'invalid'. Must be one of: active, archived, draft, all"
+                    details:
+                      valid_categories: ["active", "archived", "draft", "all"]
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/DatabaseError'
+
+  /files/categories/stats:
+    get:
+      tags:
+        - File Categorization
+      summary: Get category statistics
+      description: Retrieve file count statistics by category for the authenticated user
+      operationId: getCategoryStatistics
+      responses:
+        '200':
+          description: Category statistics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryStatsResponse'
+              examples:
+                stats_example:
+                  summary: Category statistics
+                  value:
+                    success: true
+                    statistics:
+                      categories:
+                        active:
+                          count: 15
+                          percentage: 60.0
+                        archived:
+                          count: 8
+                          percentage: 32.0
+                        draft:
+                          count: 2
+                          percentage: 8.0
+                      total_files: 25
+                      total_active_files: 25
+                      total_deleted_files: 3
+                      last_updated: "2025-11-16T10:30:00Z"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/DatabaseError'
+
+  /files/categories:
+    get:
+      tags:
+        - File Categorization
+      summary: Get available categories
+      description: Retrieve information about all available file categories with descriptions
+      operationId: getAvailableCategories
+      responses:
+        '200':
+          description: Available categories retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableCategoriesResponse'
+              examples:
+                categories_info:
+                  summary: Available category information
+                  value:
+                    success: true
+                    categories:
+                      active:
+                        name: "active"
+                        display_name: "Active"
+                        description: "Frequently used files, ready for immediate use"
+                        is_default: true
+                      archived:
+                        name: "archived"
+                        display_name: "Archived"
+                        description: "Infrequently used files, stored for reference"
+                        is_default: false
+                      draft:
+                        name: "draft"
+                        display_name: "Draft"
+                        description: "Work-in-progress files, not yet finalized"
+                        is_default: false
+                    valid_categories: ["active", "archived", "draft"]
+                    default_category: "active"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from the authentication endpoint
+
+  schemas:
+    CategoryUpdateRequest:
+      type: object
+      required:
+        - category
+      properties:
+        category:
+          type: string
+          enum: [active, archived, draft]
+          description: Target category for the file
+          example: archived
+      additionalProperties: false
+
+    BulkCategoryUpdateRequest:
+      type: object
+      required:
+        - file_ids
+        - category
+      properties:
+        file_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+          minItems: 1
+          maxItems: 100
+          description: Array of file IDs to update
+          example: [42, 43, 44]
+        category:
+          type: string
+          enum: [active, archived, draft]
+          description: Target category for all files
+          example: archived
+      additionalProperties: false
+
+    FileInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Unique file identifier
+          example: 42
+        original_filename:
+          type: string
+          description: Original filename as uploaded
+          example: "Resume_2024.pdf"
+        category:
+          type: string
+          enum: [active, archived, draft]
+          description: Current file category
+          example: "active"
+        file_size:
+          type: integer
+          format: int64
+          description: File size in bytes
+          example: 524288
+        formatted_file_size:
+          type: string
+          description: Human-readable file size
+          example: "512 KB"
+        mime_type:
+          type: string
+          description: MIME type of the file
+          example: "application/pdf"
+        created_at:
+          type: string
+          format: date-time
+          description: File creation timestamp
+          example: "2025-11-01T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Last modification timestamp
+          example: "2025-11-16T10:30:00Z"
+        category_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When category was last changed
+          example: "2025-11-10T15:20:00Z"
+        category_updated_by:
+          type: integer
+          format: int64
+          nullable: true
+          description: User ID who last changed category
+          example: 123
+
+    CategoryUpdateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+          example: true
+        message:
+          type: string
+          description: Success message
+          example: "File category updated successfully"
+        file:
+          $ref: '#/components/schemas/FileInfo'
+
+    BulkUpdateSummary:
+      type: object
+      properties:
+        total_requested:
+          type: integer
+          description: Total number of files requested for update
+          example: 3
+        successful_updates:
+          type: integer
+          description: Number of files successfully updated
+          example: 3
+        failed_updates:
+          type: integer
+          description: Number of files that failed to update
+          example: 0
+        category:
+          type: string
+          enum: [active, archived, draft]
+          description: Target category used for update
+          example: "archived"
+
+    FailedFileUpdate:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: File ID that failed to update
+          example: 44
+        error:
+          type: string
+          description: Error description
+          example: "File not found or access denied"
+
+    BulkCategoryUpdateResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+          example: true
+        message:
+          type: string
+          description: Success message
+          example: "Bulk category update completed"
+        summary:
+          $ref: '#/components/schemas/BulkUpdateSummary'
+        updated_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileInfo'
+          description: List of successfully updated files
+        failed_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FailedFileUpdate'
+          description: List of files that failed to update
+
+    PaginationInfo:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          description: Current page number
+          example: 1
+        per_page:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Items per page
+          example: 20
+        total:
+          type: integer
+          minimum: 0
+          description: Total number of items
+          example: 8
+        total_pages:
+          type: integer
+          minimum: 0
+          description: Total number of pages
+          example: 1
+        has_next:
+          type: boolean
+          description: Whether there is a next page
+          example: false
+        has_prev:
+          type: boolean
+          description: Whether there is a previous page
+          example: false
+
+    FilterInfo:
+      type: object
+      properties:
+        category:
+          type: string
+          nullable: true
+          enum: [active, archived, draft, all]
+          description: Applied category filter
+          example: "active"
+        search:
+          type: string
+          nullable: true
+          description: Applied search term
+          example: null
+        sort_by:
+          type: string
+          enum: [created_at, updated_at, original_filename, file_size, category]
+          description: Field used for sorting
+          example: "created_at"
+        sort_order:
+          type: string
+          enum: [asc, desc]
+          description: Sort direction
+          example: "desc"
+
+    FileListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+          example: true
+        data:
+          type: object
+          properties:
+            files:
+              type: array
+              items:
+                $ref: '#/components/schemas/FileInfo'
+              description: List of files
+            pagination:
+              $ref: '#/components/schemas/PaginationInfo'
+            filter:
+              $ref: '#/components/schemas/FilterInfo'
+
+    CategoryStats:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 0
+          description: Number of files in this category
+          example: 15
+        percentage:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Percentage of total files
+          example: 60.0
+
+    CategoryStatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+          example: true
+        statistics:
+          type: object
+          properties:
+            categories:
+              type: object
+              properties:
+                active:
+                  $ref: '#/components/schemas/CategoryStats'
+                archived:
+                  $ref: '#/components/schemas/CategoryStats'
+                draft:
+                  $ref: '#/components/schemas/CategoryStats'
+              description: Statistics by category
+            total_files:
+              type: integer
+              minimum: 0
+              description: Total number of files (including deleted)
+              example: 25
+            total_active_files:
+              type: integer
+              minimum: 0
+              description: Total number of active (non-deleted) files
+              example: 25
+            total_deleted_files:
+              type: integer
+              minimum: 0
+              description: Total number of deleted files
+              example: 3
+            last_updated:
+              type: string
+              format: date-time
+              description: When statistics were calculated
+              example: "2025-11-16T10:30:00Z"
+
+    CategoryInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          enum: [active, archived, draft]
+          description: Category internal name
+          example: "active"
+        display_name:
+          type: string
+          description: Human-readable category name
+          example: "Active"
+        description:
+          type: string
+          description: Category description
+          example: "Frequently used files, ready for immediate use"
+        is_default:
+          type: boolean
+          description: Whether this is the default category
+          example: true
+
+    AvailableCategoriesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+          example: true
+        categories:
+          type: object
+          properties:
+            active:
+              $ref: '#/components/schemas/CategoryInfo'
+            archived:
+              $ref: '#/components/schemas/CategoryInfo'
+            draft:
+              $ref: '#/components/schemas/CategoryInfo'
+          description: Available categories with information
+        valid_categories:
+          type: array
+          items:
+            type: string
+            enum: [active, archived, draft]
+          description: List of valid category names
+          example: ["active", "archived", "draft"]
+        default_category:
+          type: string
+          enum: [active, archived, draft]
+          description: Default category for new files
+          example: "active"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Operation success status
+          example: false
+        error:
+          type: string
+          description: Error code
+          example: "INVALID_INPUT"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Invalid category provided"
+        details:
+          type: object
+          description: Additional error context
+          additionalProperties: true
+          example:
+            valid_categories: ["active", "archived", "draft"]
+
+  responses:
+    UnauthorizedError:
+      description: Authentication required or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            missing_token:
+              summary: Missing authorization header
+              value:
+                success: false
+                error: "UNAUTHORIZED"
+                message: "Missing or invalid JWT token"
+            invalid_token:
+              summary: Invalid JWT token
+              value:
+                success: false
+                error: "UNAUTHORIZED"
+                message: "Invalid JWT token"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            server_error:
+              summary: Generic server error
+              value:
+                success: false
+                error: "UNKNOWN"
+                message: "An internal server error occurred"
+
+    DatabaseError:
+      description: Database operation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            db_error:
+              summary: Database error
+              value:
+                success: false
+                error: "DATABASE_ERROR"
+                message: "Failed to retrieve data from database"
+
+tags:
+  - name: File Categorization
+    description: Operations for organizing files into categories
+    externalDocs:
+      description: Find out more about file categorization
+      url: http://localhost:5001/apidocs

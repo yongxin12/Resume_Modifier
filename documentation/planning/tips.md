@@ -7,7 +7,8 @@ Assist me in resolving these issues to ensure that Docker containers with all fu
 
 Diagnose the cause of the error, list all potential contributing factors, and determine whether they can be resolved.
 
-Help me resolve these issues,
+Help me resolve these issues
+
 then organize and categorize all test files and documentation, consolidating files with identical functions into unified folders.
 
 If the issue has been resolved, please document the measures you took in the Markdown file to record the root cause and the correct solution.

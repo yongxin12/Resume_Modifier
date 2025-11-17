@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, redirect, session, current_app, send_file
 from flasgger import swag_from
+import os
 from app.extensions import db
 from app.utils.pdf_validator import PDFValidator
 from app.utils.job_validator import JobValidator
@@ -837,11 +838,17 @@ def upload_file():
         
         # Create database record with enhanced fields
         try:
+            # Generate a truly unique stored_filename to avoid cross-user conflicts
+            import time
+            timestamp = int(time.time() * 1000000)  # Microsecond precision
+            file_extension = os.path.splitext(uploaded_file.filename)[1].lower()
+            unique_stored_filename = f"user_{current_user_id}_{timestamp}_{validation_result.sanitized_filename}{file_extension if not validation_result.sanitized_filename.endswith(file_extension) else ''}"
+            
             resume_file = ResumeFile(
                 user_id=current_user_id,
                 original_filename=uploaded_file.filename,  # Keep actual original filename
                 display_filename=duplicate_result['display_filename'],  # Use display_filename from duplicate handler
-                stored_filename=validation_result.sanitized_filename,
+                stored_filename=unique_stored_filename,
                 file_path=storage_result.file_path if storage_result.storage_type == 'local' else storage_result.s3_key,
                 file_size=storage_result.file_size,
                 mime_type=uploaded_file.content_type or 'application/octet-stream',
