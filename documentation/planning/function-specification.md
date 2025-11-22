@@ -45,6 +45,9 @@ The tool aims to serve North American and global job seekers by integrating Data
 | **API-05a** | **File Download API**                    | As a user, I want to download my stored resume documents in their original format or as PDF.               | `/files/{id}` GET endpoint returns binary file with appropriate content headers for download. Supports format conversion parameter.                |
 | **API-05b** | **File List API**                        | As a user, I want to view all my uploaded resume documents with metadata like size, upload date, and format. | `/files` GET endpoint returns paginated list of user's documents with metadata. Supports sorting, filtering, and search functionality.              |
 | **API-05c** | **File Metadata API**                    | As a user, I want to retrieve detailed information about a specific document including extracted text summary. | `/files/{id}/info` GET endpoint returns comprehensive file metadata including extracted text preview and processing status.                       |
+| **API-05c-1** | **File Thumbnail Generation**           | As a user, I want thumbnails generated automatically when I upload PDFs so I can quickly identify documents. | System automatically generates 150x200px thumbnails from first page of uploaded PDF files during processing workflow.                          |
+| **API-05c-2** | **File Thumbnail API**                  | As a user, I want to see thumbnails of the files I want to preview so I can quickly identify correct resumes. | `/files/{id}/info` includes `thumbnail` object with `thumbnail_url`, `has_thumbnail`, and `thumbnail_status` fields in response.                |
+| **API-05c-3** | **Thumbnail Endpoint**                  | As a user, I want direct access to thumbnail images with proper caching for performance.                   | `/files/{id}/thumbnail` GET endpoint serves thumbnail images with cache headers. Returns default placeholder when unavailable.                   |
 | **API-05d** | **File Deletion API**                    | As a user, I want to delete stored resume documents to manage storage and remove outdated files.           | `/files/{id}` DELETE endpoint removes document from storage and database. Returns confirmation. Bulk deletion via `/files` DELETE with file_ids array. |
 | **API-06** | **Resume Upload API**                    | As a user, I want to upload my resume so I can receive analysis and feedback.                              | `/resume/upload` POST endpoint accepts PDF or DOCX, stores it in S3 / Supabase storage, and returns file metadata.                                |
 | **API-07** | **Resume Scoring API**                   | As a user, I want my resume scored by AI so I can understand my job fit.                                   | `/resume/score` POST endpoint accepts resume text, file, or file_id and returns a structured JSON score.                                         |
@@ -347,12 +350,48 @@ GET /files?page=1&per_page=20&sort_by=created_at&sort_order=desc&search=resume
 }
 ```
 
-#### **File Metadata (API-05c)**
+#### **File Metadata (API-05c) - Enhanced with Thumbnails**
 ```
 GET /files/{id}/info
-- Returns detailed file information
+- Returns detailed file information including thumbnail data
 - Includes: extracted_text length, storage_provider, processing_status
-- Useful for preview and UI rendering
+- NEW: thumbnail object with has_thumbnail, thumbnail_url, thumbnail_status
+- Response format:
+{
+  "success": true,
+  "file": {
+    "id": 42,
+    "original_filename": "Resume_2024.pdf",
+    // ... existing fields ...
+    "thumbnail": {
+      "has_thumbnail": true,
+      "thumbnail_url": "/api/files/42/thumbnail",
+      "thumbnail_status": "completed",
+      "thumbnail_generated_at": "2025-11-22T10:30:00Z"
+    }
+  }
+}
+```
+
+#### **Thumbnail Generation (API-05c-1)**
+```
+- Automatic PDF thumbnail generation during file processing
+- Generates 150x200px JPEG thumbnails from first page
+- Asynchronous processing with status tracking
+- Fallback to default placeholder for generation failures
+- Storage: /uploads/thumbnails/{file_id}.jpg
+```
+
+#### **Thumbnail Access (API-05c-3)**
+```
+GET /files/{id}/thumbnail
+- Serves thumbnail image directly with proper MIME type
+- Requires authentication (JWT token)
+- User authorization: access only own files
+- Cache headers for performance optimization
+- Returns default placeholder when thumbnail unavailable
+- Content-Type: image/jpeg
+- Cache-Control: public, max-age=86400
 ```
 
 #### **File Deletion (API-05d) - Enhanced with Soft Delete**

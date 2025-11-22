@@ -22,8 +22,10 @@ from app.utils.profile_validator import ProfileValidator
 from app.utils.file_validator import FileValidator
 from app.services.file_storage_service import FileStorageService
 from app.services.file_processing_service import FileProcessingService
+from app.services.thumbnail_service import ThumbnailService
 from googleapiclient.errors import HttpError
 import datetime
+import logging
 import io
 import os
 from io import BytesIO
@@ -875,6 +877,35 @@ def upload_file():
             db.session.add(resume_file)
             db.session.commit()
             
+            # Generate thumbnail for PDF files
+            if resume_file.mime_type == 'application/pdf' and storage_result.local_path:
+                try:
+                    logger = logging.getLogger(__name__)
+                    
+                    # Ensure thumbnail directory exists
+                    ThumbnailService.ensure_thumbnail_directory()
+                    
+                    # Generate thumbnail
+                    thumbnail_path = ThumbnailService.get_thumbnail_path(resume_file.id)
+                    thumbnail_success = ThumbnailService.generate_thumbnail(
+                        storage_result.local_path,
+                        thumbnail_path
+                    )
+                    
+                    if thumbnail_success:
+                        resume_file.set_thumbnail_completed(thumbnail_path)
+                    else:
+                        resume_file.set_thumbnail_failed("Thumbnail generation failed")
+                    
+                    # Update database with thumbnail status
+                    db.session.commit()
+                    
+                except Exception as e:
+                    # Don't fail the entire upload if thumbnail generation fails
+                    resume_file.set_thumbnail_failed(f"Thumbnail generation error: {str(e)}")
+                    db.session.commit()
+                    logger.warning(f"Thumbnail generation failed for file {resume_file.id}: {str(e)}")
+            
             # Prepare enhanced response
             response_data = {
                 'success': True,
@@ -1255,6 +1286,14 @@ def get_file_info(file_id):
             'updated_at': resume_file.updated_at.isoformat() if resume_file.updated_at else None
         }
         
+        # Add thumbnail information
+        file_info['thumbnail'] = {
+            'has_thumbnail': resume_file.has_thumbnail,
+            'thumbnail_url': resume_file.get_thumbnail_url() if resume_file.has_thumbnail else None,
+            'thumbnail_status': resume_file.thumbnail_status,
+            'thumbnail_generated_at': resume_file.thumbnail_generated_at.isoformat() if resume_file.thumbnail_generated_at else None
+        }
+        
         # Add extracted text info
         if resume_file.extracted_text:
             file_info['extracted_text_length'] = len(resume_file.extracted_text)
@@ -1282,6 +1321,137 @@ def get_file_info(file_id):
         return jsonify({
             'success': False,
             'message': f'Error retrieving file information: {str(e)}'
+        }), 500
+
+
+@api.route('/api/files/<int:file_id>/thumbnail', methods=['GET'])
+@token_required
+def get_file_thumbnail(file_id):
+    """
+    Get thumbnail image for a file
+    ---
+    tags:
+      - File Management
+    parameters:
+      - name: Authorization
+        in: header
+        required: true
+        type: string
+        description: Bearer token for authentication
+      - name: file_id
+        in: path
+        required: true
+        type: integer
+        description: ID of the file to get thumbnail for
+    responses:
+      200:
+        description: Thumbnail image
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+        headers:
+          Cache-Control:
+            description: Cache control header
+            type: string
+            example: "public, max-age=86400"
+          Content-Type:
+            description: MIME type of the image
+            type: string
+            example: "image/jpeg"
+      401:
+        description: Authentication required
+      403:
+        description: Access denied to this file
+      404:
+        description: File or thumbnail not found
+      500:
+        description: Server error
+    """
+    import logging
+    from flask import send_file, current_app
+    from app.services.thumbnail_service import ThumbnailService
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get current user ID
+        current_user_id = request.user.get('user_id')
+        
+        # Convert file_id to integer if it's a string
+        try:
+            file_id = int(file_id)
+        except (ValueError, TypeError):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file ID format'
+            }), 400
+        
+        # Get file from database (exclude soft-deleted files)
+        resume_file = ResumeFile.query.filter_by(
+            id=file_id,
+            user_id=current_user_id
+        ).filter(ResumeFile.deleted_at.is_(None)).first()
+        
+        if not resume_file:
+            return jsonify({
+                'success': False,
+                'message': 'File not found'
+            }), 404
+        
+        # Check if file has thumbnail
+        if not resume_file.has_thumbnail or resume_file.thumbnail_status != 'completed':
+            # Return default placeholder thumbnail
+            default_thumbnail = ThumbnailService.get_default_thumbnail()
+            if os.path.exists(default_thumbnail):
+                return send_file(
+                    default_thumbnail,
+                    mimetype='image/jpeg',
+                    as_attachment=False,
+                    download_name=None,
+                    max_age=86400  # Cache for 24 hours
+                )
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Thumbnail not available'
+                }), 404
+        
+        # Get thumbnail path
+        thumbnail_path = resume_file.get_thumbnail_path()
+        
+        if not thumbnail_path or not os.path.exists(thumbnail_path):
+            # Try default thumbnail again
+            default_thumbnail = ThumbnailService.get_default_thumbnail()
+            if os.path.exists(default_thumbnail):
+                return send_file(
+                    default_thumbnail,
+                    mimetype='image/jpeg',
+                    as_attachment=False,
+                    download_name=None,
+                    max_age=86400
+                )
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Thumbnail file not found'
+                }), 404
+        
+        # Serve the thumbnail with caching headers
+        return send_file(
+            thumbnail_path,
+            mimetype='image/jpeg',
+            as_attachment=False,
+            download_name=None,
+            max_age=86400  # Cache for 24 hours
+        )
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during thumbnail retrieval: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Error retrieving thumbnail: {str(e)}'
         }), 500
 
 

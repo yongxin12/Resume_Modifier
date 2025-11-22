@@ -207,6 +207,13 @@ class ResumeFile(db.Model):
     duplicate_sequence = db.Column(db.Integer, default=0)  # Sequence number for duplicates (0 = original)
     original_file_id = db.Column(db.Integer, db.ForeignKey('resume_files.id'), nullable=True)  # Reference to original file
     
+    # Thumbnail Fields
+    has_thumbnail = db.Column(db.Boolean, default=False)  # Whether thumbnail exists
+    thumbnail_path = db.Column(db.String(500), nullable=True)  # Path to thumbnail file
+    thumbnail_status = db.Column(db.String(50), default='pending')  # pending, generating, completed, failed
+    thumbnail_generated_at = db.Column(db.DateTime, nullable=True)  # When thumbnail was created
+    thumbnail_error = db.Column(db.Text, nullable=True)  # Error message if generation failed
+    
     # Soft Deletion and Metadata
     is_active = db.Column(db.Boolean, default=True)  # For soft delete functionality
     deleted_at = db.Column(db.DateTime, nullable=True)  # Timestamp when soft deleted
@@ -227,6 +234,7 @@ class ResumeFile(db.Model):
         db.CheckConstraint('file_size > 0', name='check_positive_file_size'),
         db.CheckConstraint("storage_type in ('local', 's3')", name='check_valid_storage_type'),
         db.CheckConstraint("processing_status in ('pending', 'processing', 'completed', 'failed')", name='check_valid_processing_status'),
+        db.CheckConstraint("thumbnail_status in ('pending', 'generating', 'completed', 'failed', 'unavailable')", name='check_valid_thumbnail_status'),
         db.CheckConstraint('duplicate_sequence >= 0', name='check_positive_duplicate_sequence'),
         db.Index('idx_user_created', 'user_id', 'created_at'),
         db.Index('idx_processing_status', 'processing_status'),
@@ -237,6 +245,7 @@ class ResumeFile(db.Model):
         db.Index('idx_google_doc', 'google_doc_id'),
         db.Index('idx_duplicates', 'original_file_id', 'duplicate_sequence'),
         db.Index('idx_deleted_files', 'is_active', 'deleted_at'),
+        db.Index('idx_thumbnail_status', 'thumbnail_status'),
     )
     
     def to_dict(self, include_google_drive=True, include_duplicates=True) -> Dict[str, Any]:
@@ -344,6 +353,57 @@ class ResumeFile(db.Model):
         self.is_active = True
         self.deleted_at = None
         self.deleted_by = None
+    
+    def get_thumbnail_path(self) -> str:
+        """Get path to thumbnail file for this resume file."""
+        import os
+        from flask import current_app
+        
+        if not self.has_thumbnail or not self.thumbnail_path:
+            return None
+            
+        # If thumbnail_path is already absolute, return as-is
+        if os.path.isabs(self.thumbnail_path):
+            return self.thumbnail_path
+            
+        # Otherwise, construct path relative to upload directory
+        upload_dir = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+        return os.path.join(upload_dir, 'thumbnails', f"{self.id}.jpg")
+    
+    def has_valid_thumbnail(self) -> bool:
+        """Check if file has a valid thumbnail."""
+        import os
+        
+        if not self.has_thumbnail or self.thumbnail_status != 'completed':
+            return False
+            
+        thumbnail_path = self.get_thumbnail_path()
+        if not thumbnail_path:
+            return False
+            
+        return os.path.exists(thumbnail_path)
+    
+    def get_thumbnail_url(self) -> str:
+        """Get URL for thumbnail access."""
+        if not self.has_thumbnail:
+            return None
+            
+        return f"/api/files/{self.id}/thumbnail"
+    
+    def set_thumbnail_completed(self, thumbnail_path: str):
+        """Mark thumbnail generation as completed."""
+        self.has_thumbnail = True
+        self.thumbnail_status = 'completed'
+        self.thumbnail_path = thumbnail_path
+        self.thumbnail_generated_at = datetime.utcnow()
+        self.thumbnail_error = None
+    
+    def set_thumbnail_failed(self, error_message: str):
+        """Mark thumbnail generation as failed."""
+        self.has_thumbnail = False
+        self.thumbnail_status = 'failed'
+        self.thumbnail_error = error_message
+        self.thumbnail_path = None
     
     def is_google_drive_synced(self) -> bool:
         """Check if file is synced with Google Drive."""
