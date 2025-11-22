@@ -367,12 +367,12 @@ def analyze_with_job():
       500:
         description: Analysis failed
     """
-    # Validate request
-    error, status_code, data = JobValidator.validate_request(request)
-    if error:
-        return error, status_code
-    
     try:
+        # Validate request
+        error_response, status_code, data = JobValidator.validate_request(request)
+        if error_response:
+            return error_response, status_code
+        
         # Process with ResumeAI
         resume_processor = ResumeAI("")  # Empty string as we're using provided resume
         resume_processor.parsed_resume = data['updated_resume']
@@ -384,6 +384,7 @@ def analyze_with_job():
         }), 200
         
     except Exception as e:
+        current_app.logger.error(f"Job description analysis failed: {str(e)}")
         return jsonify({
             "error": "Analysis failed",
             "details": str(e)
