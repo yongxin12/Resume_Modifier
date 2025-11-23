@@ -39,6 +39,13 @@ class StorageResult:
     content_type: Optional[str] = None
     filename: Optional[str] = None
     error_message: Optional[str] = None
+    
+    @property
+    def local_path(self):
+        """Backward compatibility property - returns file_path for local storage"""
+        if self.storage_type == 'local':
+            return self.file_path
+        return None
 
 
 class FileStorageService:
