@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 import os
 import hashlib
 import secrets
-from sqlalchemy import event
 
 
 
@@ -23,14 +22,14 @@ class User(db.Model):
     city = db.Column(db.String(100))
     bio = db.Column(db.String(200))
     country = db.Column(db.String(100))
-
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)  # Admin flag for Google Drive access
 
     resumes = db.relationship('Resume', back_populates='user', lazy='dynamic')
     job_descriptions = db.relationship('JobDescription', back_populates='user', lazy='dynamic')
     resume_files = db.relationship('ResumeFile', foreign_keys='ResumeFile.user_id', back_populates='user', lazy='dynamic')
 
-    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False)
     
     
 
@@ -119,19 +118,131 @@ class GoogleAuth(db.Model):
     refresh_token = db.Column(db.Text, nullable=False)
     token_expires_at = db.Column(db.DateTime, nullable=False)
     scope = db.Column(db.String(500), nullable=False)  # Granted OAuth scopes
+    
+    # OAuth Persistence Fields (NEW)
+    is_persistent = db.Column(db.Boolean, default=True, nullable=False)  # Enable persistence
+    auto_refresh_enabled = db.Column(db.Boolean, default=True, nullable=False)  # Auto-refresh tokens
+    last_refresh_at = db.Column(db.DateTime, nullable=True)  # Last token refresh timestamp
+    refresh_attempts = db.Column(db.Integer, default=0, nullable=False)  # Count of refresh attempts
+    max_refresh_failures = db.Column(db.Integer, default=5, nullable=False)  # Max failures before deactivation
+    
+    # Storage Monitoring Fields (NEW)
+    drive_quota_total = db.Column(db.BigInteger, nullable=True)  # Total Google Drive quota in bytes
+    drive_quota_used = db.Column(db.BigInteger, nullable=True)  # Used Google Drive space in bytes
+    last_quota_check = db.Column(db.DateTime, nullable=True)  # Last quota check timestamp
+    quota_warning_level = db.Column(db.String(20), nullable=True)  # Current warning level: none, low, medium, high, critical
+    quota_warnings_sent = db.Column(db.JSON, nullable=True, default=list)  # History of warnings sent
+    
+    # Session and Security Fields (NEW)
+    persistent_session_id = db.Column(db.String(128), nullable=True, unique=True)  # Unique session identifier
+    last_activity_at = db.Column(db.DateTime, nullable=True)  # Last API activity timestamp
+    is_active = db.Column(db.Boolean, default=True, nullable=False)  # Active status
+    deactivated_reason = db.Column(db.String(100), nullable=True)  # Reason for deactivation
+    deactivated_at = db.Column(db.DateTime, nullable=True)  # Deactivation timestamp
+    
+    # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationship to user
     user = db.relationship('User', backref='google_auth', lazy=True)
     
-    # Unique constraint - one Google auth per user
+    # Constraints and Indexes
     __table_args__ = (
         db.UniqueConstraint('user_id', name='unique_user_google_auth'),
+        db.CheckConstraint('refresh_attempts >= 0', name='check_positive_refresh_attempts'),
+        db.CheckConstraint('max_refresh_failures > 0', name='check_positive_max_failures'),
+        db.CheckConstraint("quota_warning_level IN ('none', 'low', 'medium', 'high', 'critical')", name='check_valid_warning_level'),
+        db.Index('idx_google_auth_session', 'persistent_session_id'),
+        db.Index('idx_google_auth_active', 'is_active', 'user_id'),
+        db.Index('idx_google_auth_expires', 'token_expires_at'),
+        db.Index('idx_google_auth_quota_check', 'last_quota_check'),
     )
     
+    def is_token_expired(self) -> bool:
+        """Check if the access token is expired or expires soon (within 5 minutes)."""
+        if not self.token_expires_at:
+            return True
+        return datetime.utcnow() >= (self.token_expires_at - timedelta(minutes=5))
+    
+    def needs_refresh(self) -> bool:
+        """Check if token needs refresh and auto-refresh is enabled."""
+        return self.is_token_expired() and self.auto_refresh_enabled and self.is_active
+    
+    def calculate_usage_percentage(self) -> float:
+        """Calculate storage usage percentage."""
+        if not self.drive_quota_total or self.drive_quota_total == 0:
+            return 0.0
+        return (self.drive_quota_used or 0) / self.drive_quota_total * 100
+    
+    def get_storage_warning_level(self) -> str:
+        """Determine storage warning level based on usage percentage."""
+        usage_percent = self.calculate_usage_percentage()
+        if usage_percent >= 95:
+            return 'critical'
+        elif usage_percent >= 90:
+            return 'high'
+        elif usage_percent >= 85:
+            return 'medium'
+        elif usage_percent >= 80:
+            return 'low'
+        else:
+            return 'none'
+    
+    def update_activity(self):
+        """Update last activity timestamp."""
+        self.last_activity_at = datetime.utcnow()
+    
+    def deactivate(self, reason: str):
+        """Deactivate the Google authentication."""
+        self.is_active = False
+        self.deactivated_reason = reason
+        self.deactivated_at = datetime.utcnow()
+    
+    def to_dict(self, include_tokens=False) -> Dict[str, Any]:
+        """Convert model instance to dictionary for JSON serialization."""
+        result = {
+            'id': self.id,
+            'user_id': self.user_id,
+            'google_user_id': self.google_user_id,
+            'email': self.email,
+            'name': self.name,
+            'picture': self.picture,
+            'scope': self.scope,
+            'is_persistent': self.is_persistent,
+            'auto_refresh_enabled': self.auto_refresh_enabled,
+            'last_refresh_at': self.last_refresh_at.isoformat() if self.last_refresh_at else None,
+            'refresh_attempts': self.refresh_attempts,
+            'max_refresh_failures': self.max_refresh_failures,
+            'persistent_session_id': self.persistent_session_id,
+            'last_activity_at': self.last_activity_at.isoformat() if self.last_activity_at else None,
+            'is_active': self.is_active,
+            'deactivated_reason': self.deactivated_reason,
+            'deactivated_at': self.deactivated_at.isoformat() if self.deactivated_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'token_expires_at': self.token_expires_at.isoformat() if self.token_expires_at else None,
+            'is_token_expired': self.is_token_expired(),
+            'needs_refresh': self.needs_refresh(),
+            'storage': {
+                'quota_total': self.drive_quota_total,
+                'quota_used': self.drive_quota_used,
+                'usage_percentage': round(self.calculate_usage_percentage(), 2),
+                'warning_level': self.get_storage_warning_level(),
+                'last_quota_check': self.last_quota_check.isoformat() if self.last_quota_check else None,
+                'quota_warnings_sent': self.quota_warnings_sent or []
+            }
+        }
+        
+        # Include tokens only if explicitly requested (for admin/debug purposes)
+        if include_tokens:
+            result['access_token'] = self.access_token
+            result['refresh_token'] = self.refresh_token
+        
+        return result
+    
     def __repr__(self):
-        return f'<GoogleAuth {self.user_id}>'
+        return f'<GoogleAuth {self.user_id} (Active: {self.is_active}, Persistent: {self.is_persistent})>'
 
 
 class GeneratedDocument(db.Model):
@@ -172,10 +283,10 @@ class ResumeFile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     original_filename = db.Column(db.String(255), nullable=False)
-    display_filename = db.Column(db.String(255), nullable=True)  # Filename shown to user (with duplicate info)
+    display_filename = db.Column(db.String(255), nullable=True)  # Display name for duplicates
     stored_filename = db.Column(db.String(255), nullable=False, unique=True)
     file_size = db.Column(db.Integer, nullable=False)
-    mime_type = db.Column(db.String(100), nullable=False, default='application/octet-stream')
+    mime_type = db.Column(db.String(100), nullable=False)
     storage_type = db.Column(db.String(50), nullable=False, default='local')  # 'local' or 's3'
     file_path = db.Column(db.String(500), nullable=False)  # Local path or S3 key
     s3_bucket = db.Column(db.String(100), nullable=True)  # S3 bucket name if using S3
@@ -194,31 +305,36 @@ class ResumeFile(db.Model):
     processing_status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
     processing_error = db.Column(db.Text, nullable=True)  # Error message if processing failed
     
-    # Processing Result Fields (for storing extracted metadata)
+    # Additional Content Analysis Fields (Railway DB compatibility)
     page_count = db.Column(db.Integer, nullable=True)  # Number of pages in document
     paragraph_count = db.Column(db.Integer, nullable=True)  # Number of paragraphs
-    language = db.Column(db.String(10), nullable=True)  # Detected language code (e.g., 'en')
-    keywords = db.Column(db.JSON, nullable=True, default=list)  # Extracted keywords as JSON array
-    processing_time = db.Column(db.Float, nullable=True)  # Time taken to process in seconds
-    processing_metadata = db.Column(db.JSON, nullable=True, default=dict)  # Additional processing metadata as JSON
+    language = db.Column(db.String(10), nullable=True)  # Detected language (e.g., 'en', 'fr')
+    keywords = db.Column(db.JSON, nullable=True, default=list)  # Extracted keywords
+    processing_time = db.Column(db.Float, nullable=True)  # Time taken to process (seconds)
+    processing_metadata = db.Column(db.JSON, nullable=True, default=dict)  # Additional processing metadata
     
     # Duplicate Handling Fields
     is_duplicate = db.Column(db.Boolean, default=False)  # Whether this is a duplicate file
     duplicate_sequence = db.Column(db.Integer, default=0)  # Sequence number for duplicates (0 = original)
     original_file_id = db.Column(db.Integer, db.ForeignKey('resume_files.id'), nullable=True)  # Reference to original file
     
-    # Thumbnail Fields
+    # Thumbnail Fields (Railway DB compatibility)
     has_thumbnail = db.Column(db.Boolean, default=False)  # Whether thumbnail exists
     thumbnail_path = db.Column(db.String(500), nullable=True)  # Path to thumbnail file
-    thumbnail_status = db.Column(db.String(50), default='pending')  # pending, generating, completed, failed
-    thumbnail_generated_at = db.Column(db.DateTime, nullable=True)  # When thumbnail was created
-    thumbnail_error = db.Column(db.Text, nullable=True)  # Error message if generation failed
+    thumbnail_status = db.Column(db.String(20), default='pending')  # pending, generating, completed, failed
+    thumbnail_generated_at = db.Column(db.DateTime, nullable=True)  # When thumbnail was generated
+    thumbnail_error = db.Column(db.Text, nullable=True)  # Thumbnail generation error message
     
     # Soft Deletion and Metadata
     is_active = db.Column(db.Boolean, default=True)  # For soft delete functionality
     deleted_at = db.Column(db.DateTime, nullable=True)  # Timestamp when soft deleted
     deleted_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who deleted it
     tags = db.Column(db.JSON, nullable=True, default=list)  # User-defined tags
+    
+    # File Organization and Categorization Fields (NEW)
+    category = db.Column(db.String(20), nullable=False, default='active')  # active, archived, draft
+    category_updated_at = db.Column(db.DateTime, nullable=True)  # When category was last changed
+    category_updated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Who changed category
     
     # Timestamps
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -234,8 +350,9 @@ class ResumeFile(db.Model):
         db.CheckConstraint('file_size > 0', name='check_positive_file_size'),
         db.CheckConstraint("storage_type in ('local', 's3')", name='check_valid_storage_type'),
         db.CheckConstraint("processing_status in ('pending', 'processing', 'completed', 'failed')", name='check_valid_processing_status'),
-        db.CheckConstraint("thumbnail_status in ('pending', 'generating', 'completed', 'failed', 'unavailable')", name='check_valid_thumbnail_status'),
+        db.CheckConstraint("thumbnail_status in ('pending', 'generating', 'completed', 'failed')", name='check_valid_thumbnail_status'),
         db.CheckConstraint('duplicate_sequence >= 0', name='check_positive_duplicate_sequence'),
+        db.CheckConstraint("category in ('active', 'archived', 'draft')", name='check_valid_category'),
         db.Index('idx_user_created', 'user_id', 'created_at'),
         db.Index('idx_processing_status', 'processing_status'),
         db.Index('idx_active_files', 'is_active'),
@@ -245,10 +362,11 @@ class ResumeFile(db.Model):
         db.Index('idx_google_doc', 'google_doc_id'),
         db.Index('idx_duplicates', 'original_file_id', 'duplicate_sequence'),
         db.Index('idx_deleted_files', 'is_active', 'deleted_at'),
-        db.Index('idx_thumbnail_status', 'thumbnail_status'),
+        db.Index('idx_category', 'user_id', 'category', 'is_active'),  # For category filtering
+        db.Index('idx_category_updated', 'category_updated_at'),  # For category tracking
     )
     
-    def to_dict(self, include_google_drive=True, include_duplicates=True) -> Dict[str, Any]:
+    def to_dict(self, include_google_drive=True, include_duplicates=True, include_category=True) -> Dict[str, Any]:
         """Convert model instance to dictionary for JSON serialization."""
         result = {
             'id': self.id,
@@ -266,17 +384,17 @@ class ResumeFile(db.Model):
             'extracted_text': self.extracted_text,
             'processing_status': self.processing_status,
             'processing_error': self.processing_error,
-            'page_count': self.page_count,
-            'paragraph_count': self.paragraph_count,
-            'language': self.language,
-            'keywords': self.keywords or [],
-            'processing_time': self.processing_time,
-            'processing_metadata': self.processing_metadata or {},
             'tags': self.tags or [],
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+        
+        # Add category information if requested
+        if include_category:
+            result['category'] = self.category
+            result['category_updated_at'] = self.category_updated_at.isoformat() if self.category_updated_at else None
+            result['category_updated_by'] = self.category_updated_by
         
         # Add Google Drive information if requested
         if include_google_drive:
@@ -322,7 +440,7 @@ class ResumeFile(db.Model):
     
     def get_display_filename(self) -> str:
         """Get the filename for display to users, including duplicate notation."""
-        # Return stored display_filename if available, otherwise compute it
+        # If display_filename is set, use it; otherwise, calculate from original_filename
         if self.display_filename:
             return self.display_filename
         
@@ -333,14 +451,21 @@ class ResumeFile(db.Model):
         name, ext = os.path.splitext(self.original_filename)
         return f"{name} ({self.duplicate_sequence}){ext}"
     
-    def set_display_filename_if_empty(self):
-        """Set display_filename if it's empty or None."""
-        if not self.display_filename:
-            if not self.is_duplicate or self.duplicate_sequence == 0:
-                self.display_filename = self.original_filename
-            else:
-                name, ext = os.path.splitext(self.original_filename)
-                self.display_filename = f"{name} ({self.duplicate_sequence}){ext}"
+    def set_thumbnail_completed(self, thumbnail_path: str):
+        """Mark thumbnail generation as completed."""
+        self.has_thumbnail = True
+        self.thumbnail_path = thumbnail_path
+        self.thumbnail_status = 'completed'
+        self.thumbnail_generated_at = datetime.utcnow()
+        self.thumbnail_error = None
+    
+    def set_thumbnail_failed(self, error_message: str):
+        """Mark thumbnail generation as failed."""
+        self.has_thumbnail = False
+        self.thumbnail_path = None
+        self.thumbnail_status = 'failed'
+        self.thumbnail_generated_at = None
+        self.thumbnail_error = error_message
     
     def soft_delete(self, deleted_by_user_id: int):
         """Mark file as soft deleted."""
@@ -353,57 +478,6 @@ class ResumeFile(db.Model):
         self.is_active = True
         self.deleted_at = None
         self.deleted_by = None
-    
-    def get_thumbnail_path(self) -> str:
-        """Get path to thumbnail file for this resume file."""
-        import os
-        from flask import current_app
-        
-        if not self.has_thumbnail or not self.thumbnail_path:
-            return None
-            
-        # If thumbnail_path is already absolute, return as-is
-        if os.path.isabs(self.thumbnail_path):
-            return self.thumbnail_path
-            
-        # Otherwise, construct path relative to upload directory
-        upload_dir = current_app.config.get('UPLOAD_FOLDER', 'uploads')
-        return os.path.join(upload_dir, 'thumbnails', f"{self.id}.jpg")
-    
-    def has_valid_thumbnail(self) -> bool:
-        """Check if file has a valid thumbnail."""
-        import os
-        
-        if not self.has_thumbnail or self.thumbnail_status != 'completed':
-            return False
-            
-        thumbnail_path = self.get_thumbnail_path()
-        if not thumbnail_path:
-            return False
-            
-        return os.path.exists(thumbnail_path)
-    
-    def get_thumbnail_url(self) -> str:
-        """Get URL for thumbnail access."""
-        if not self.has_thumbnail:
-            return None
-            
-        return f"/api/files/{self.id}/thumbnail"
-    
-    def set_thumbnail_completed(self, thumbnail_path: str):
-        """Mark thumbnail generation as completed."""
-        self.has_thumbnail = True
-        self.thumbnail_status = 'completed'
-        self.thumbnail_path = thumbnail_path
-        self.thumbnail_generated_at = datetime.utcnow()
-        self.thumbnail_error = None
-    
-    def set_thumbnail_failed(self, error_message: str):
-        """Mark thumbnail generation as failed."""
-        self.has_thumbnail = False
-        self.thumbnail_status = 'failed'
-        self.thumbnail_error = error_message
-        self.thumbnail_path = None
     
     def is_google_drive_synced(self) -> bool:
         """Check if file is synced with Google Drive."""
@@ -438,16 +512,145 @@ class ResumeFile(db.Model):
             query = query.filter_by(user_id=user_id)
         return query
     
+    # Category Management Methods (NEW)
+    def update_category(self, new_category: str, updated_by_user_id: int) -> bool:
+        """
+        Update file category with validation and tracking.
+        
+        Args:
+            new_category: New category ('active', 'archived', 'draft')
+            updated_by_user_id: ID of user making the change
+            
+        Returns:
+            bool: True if update successful, False otherwise
+        """
+        valid_categories = ['active', 'archived', 'draft']
+        if new_category not in valid_categories:
+            return False
+        
+        if self.category != new_category:
+            self.category = new_category
+            self.category_updated_at = datetime.utcnow()
+            self.category_updated_by = updated_by_user_id
+            return True
+        return True  # No change needed, but not an error
+    
+    @classmethod
+    def get_files_by_category(cls, user_id: int, category: str = None):
+        """
+        Get active files filtered by category.
+        
+        Args:
+            user_id: ID of the user
+            category: Category to filter by ('active', 'archived', 'draft') or None for all
+            
+        Returns:
+            SQLAlchemy query object
+        """
+        query = cls.query.filter_by(user_id=user_id, is_active=True)
+        if category and category != 'all':
+            query = query.filter_by(category=category)
+        return query
+    
+    @classmethod
+    def get_category_statistics(cls, user_id: int) -> Dict[str, Any]:
+        """
+        Get file count statistics by category for a user.
+        
+        Args:
+            user_id: ID of the user
+            
+        Returns:
+            dict: Statistics including counts and percentages by category
+        """
+        from sqlalchemy import func
+        
+        # Get counts by category for active files
+        category_counts = db.session.query(
+            cls.category,
+            func.count(cls.id).label('count')
+        ).filter_by(
+            user_id=user_id,
+            is_active=True
+        ).group_by(cls.category).all()
+        
+        # Get total counts
+        total_active = cls.query.filter_by(user_id=user_id, is_active=True).count()
+        total_deleted = cls.query.filter_by(user_id=user_id, is_active=False).count()
+        
+        # Build statistics dictionary
+        categories = {}
+        for category, count in category_counts:
+            percentage = (count / total_active * 100) if total_active > 0 else 0
+            categories[category] = {
+                'count': count,
+                'percentage': round(percentage, 1)
+            }
+        
+        # Ensure all categories are represented
+        for cat in ['active', 'archived', 'draft']:
+            if cat not in categories:
+                categories[cat] = {'count': 0, 'percentage': 0.0}
+        
+        return {
+            'categories': categories,
+            'total_files': total_active + total_deleted,
+            'total_active_files': total_active,
+            'total_deleted_files': total_deleted,
+            'last_updated': datetime.utcnow().isoformat()
+        }
+    
+    @classmethod
+    def bulk_update_category(cls, user_id: int, file_ids: List[int], new_category: str, updated_by_user_id: int) -> Dict[str, Any]:
+        """
+        Update category for multiple files belonging to a user.
+        
+        Args:
+            user_id: ID of the user (for security validation)
+            file_ids: List of file IDs to update
+            new_category: New category to assign
+            updated_by_user_id: ID of user making the change
+            
+        Returns:
+            dict: Summary of successful and failed updates
+        """
+        valid_categories = ['active', 'archived', 'draft']
+        if new_category not in valid_categories:
+            return {
+                'successful_updates': 0,
+                'failed_updates': len(file_ids),
+                'error': f'Invalid category: {new_category}'
+            }
+        
+        # Get files that belong to the user and are active
+        files = cls.query.filter(
+            cls.id.in_(file_ids),
+            cls.user_id == user_id,
+            cls.is_active == True
+        ).all()
+        
+        successful_updates = []
+        failed_updates = []
+        
+        for file_id in file_ids:
+            file_obj = next((f for f in files if f.id == file_id), None)
+            if file_obj:
+                if file_obj.update_category(new_category, updated_by_user_id):
+                    successful_updates.append(file_obj)
+                else:
+                    failed_updates.append({'id': file_id, 'error': 'Category update failed'})
+            else:
+                failed_updates.append({'id': file_id, 'error': 'File not found or access denied'})
+        
+        return {
+            'successful_updates': len(successful_updates),
+            'failed_updates': len(failed_updates),
+            'updated_files': [f.to_dict(include_google_drive=False, include_duplicates=False) for f in successful_updates],
+            'failed_files': failed_updates
+        }
+    
     def __repr__(self):
         return f'<ResumeFile {self.original_filename} (User: {self.user_id})>'
-
-
-# Event listener to automatically set display_filename if it's None
-@event.listens_for(ResumeFile, 'before_insert')
-def set_display_filename_before_insert(mapper, connection, target):
-    """Automatically set display_filename before inserting if it's None."""
-    if target.display_filename is None:
-        target.set_display_filename_if_empty()
 
 
 class PasswordResetToken(db.Model):

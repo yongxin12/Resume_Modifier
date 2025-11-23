@@ -386,7 +386,7 @@ def analyze_with_job():
         }), 200
         
     except Exception as e:
-        current_app.logger.error(f"Job description analysis failed: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Job description analysis failed: {str(e)}")
         return jsonify({
             "error": "Analysis failed",
             "details": str(e)
@@ -850,7 +850,7 @@ def upload_file():
             resume_file = ResumeFile(
                 user_id=current_user_id,
                 original_filename=uploaded_file.filename,  # Keep actual original filename
-                display_filename=duplicate_result['display_filename'],  # Use display_filename from duplicate handler
+                display_filename=duplicate_result['display_filename'],  # Display name from duplicate handler
                 stored_filename=unique_stored_filename,
                 file_path=storage_result.file_path if storage_result.storage_type == 'local' else storage_result.s3_key,
                 file_size=storage_result.file_size,
@@ -862,6 +862,19 @@ def upload_file():
                 is_processed=should_process and extracted_text is not None,
                 processing_status='completed' if extracted_text else 'pending',
                 processing_error=processing_warning,
+                # Additional content analysis fields (initialize as empty/default)
+                page_count=None,
+                paragraph_count=None,
+                language=None,
+                keywords=[],
+                processing_time=None,
+                processing_metadata={},
+                # Thumbnail fields (initialize with defaults)
+                has_thumbnail=False,
+                thumbnail_path=None,
+                thumbnail_status='pending',
+                thumbnail_generated_at=None,
+                thumbnail_error=None,
                 tags=[],
                 # Duplicate handling fields
                 is_duplicate=duplicate_result['is_duplicate'],
@@ -869,16 +882,14 @@ def upload_file():
                 original_file_id=duplicate_result.get('original_file_id'),
                 # Google Drive fields
                 google_drive_file_id=google_drive_file_id,
-                google_doc_id=google_doc_id,
-                created_at=datetime.datetime.utcnow(),
-                updated_at=datetime.datetime.utcnow()
+                google_doc_id=google_doc_id
             )
             
             db.session.add(resume_file)
             db.session.commit()
             
             # Generate thumbnail for PDF files
-            if resume_file.mime_type == 'application/pdf' and storage_result.local_path:
+            if resume_file.mime_type == 'application/pdf' and storage_result.file_path:
                 try:
                     logger = logging.getLogger(__name__)
                     
@@ -888,7 +899,7 @@ def upload_file():
                     # Generate thumbnail
                     thumbnail_path = ThumbnailService.get_thumbnail_path(resume_file.id)
                     thumbnail_success = ThumbnailService.generate_thumbnail(
-                        storage_result.local_path,
+                        storage_result.file_path,
                         thumbnail_path
                     )
                     
@@ -1317,7 +1328,7 @@ def get_file_info(file_id):
         }), 200
         
     except Exception as e:
-        logger.error(f"Unexpected error during file info retrieval: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during file info retrieval: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error retrieving file information: {str(e)}'
@@ -1448,7 +1459,7 @@ def get_file_thumbnail(file_id):
         )
         
     except Exception as e:
-        logger.error(f"Unexpected error during thumbnail retrieval: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during thumbnail retrieval: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error retrieving thumbnail: {str(e)}'
@@ -1665,7 +1676,7 @@ def get_google_doc_access(file_id):
         }), 200
         
     except Exception as e:
-        logger.error(f"Unexpected error during Google Doc access retrieval: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during Google Doc access retrieval: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error retrieving Google Doc access information: {str(e)}'
@@ -1832,7 +1843,7 @@ def delete_file(file_id):
             )
             
             if not delete_result.success:
-                logger.error(f"Storage deletion failed for file {file_id}: {delete_result.error_message}")
+                logging.getLogger(__name__).error(f"Storage deletion failed for file {file_id}: {delete_result.error_message}")
                 return jsonify({
                     'success': False,
                     'message': f'Failed to delete file from storage: {delete_result.error_message}'
@@ -1845,9 +1856,9 @@ def delete_file(file_id):
         else:
             # Soft delete: mark as deleted with timestamp and set is_active=False
             resume_file.is_active = False
-            resume_file.deleted_at = datetime.datetime.utcnow()
+            resume_file.deleted_at = datetime.datetime.datetime.utcnow()
             resume_file.deleted_by = current_user_id
-            resume_file.updated_at = datetime.datetime.utcnow()
+            resume_file.updated_at = datetime.datetime.datetime.utcnow()
             delete_type = 'soft'
         
         # Commit the database changes
@@ -1866,7 +1877,7 @@ def delete_file(file_id):
     except Exception as e:
         # Rollback any database changes
         db.session.rollback()
-        logger.error(f"Unexpected error during file deletion: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during file deletion: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Unexpected error during file deletion: {str(e)}'
@@ -2162,7 +2173,7 @@ def list_files():
         
     except Exception as e:
         # Log the error
-        logger.error(f"Unexpected error during file listing: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during file listing: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error retrieving files: {str(e)}'
@@ -2311,7 +2322,7 @@ def restore_file(file_id):
         # Restore the file
         resume_file.deleted_at = None
         resume_file.deleted_by = None
-        resume_file.updated_at = datetime.datetime.utcnow()
+        resume_file.updated_at = datetime.datetime.datetime.utcnow()
         
         # Commit the database changes
         db.session.commit()
@@ -2334,7 +2345,7 @@ def restore_file(file_id):
     except Exception as e:
         # Rollback any database changes
         db.session.rollback()
-        logger.error(f"Unexpected error during file restoration: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during file restoration: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'File restoration failed: {str(e)}'
@@ -2537,7 +2548,7 @@ def list_deleted_files():
         }), 200
         
     except Exception as e:
-        logger.error(f"Unexpected error during deleted files listing: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during deleted files listing: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error retrieving deleted files: {str(e)}'
@@ -2639,7 +2650,7 @@ def admin_restore_file(file_id):
         # Restore the file
         resume_file.deleted_at = None
         resume_file.deleted_by = None
-        resume_file.updated_at = datetime.datetime.utcnow()
+        resume_file.updated_at = datetime.datetime.datetime.utcnow()
         
         # Commit the database changes
         db.session.commit()
@@ -2663,7 +2674,7 @@ def admin_restore_file(file_id):
     except Exception as e:
         # Rollback any database changes
         db.session.rollback()
-        logger.error(f"Unexpected error during admin file restoration: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during admin file restoration: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'File restoration failed: {str(e)}'
@@ -2766,11 +2777,11 @@ def admin_permanent_delete(file_id):
                 )
                 
                 if not delete_result.success:
-                    logger.error(f"Storage deletion failed for file {file_id}: {delete_result.error_message}")
+                    logging.getLogger(__name__).error(f"Storage deletion failed for file {file_id}: {delete_result.error_message}")
                     # Continue with database deletion even if storage deletion fails
                     
             except Exception as storage_error:
-                logger.error(f"Error deleting file from storage: {str(storage_error)}")
+                logging.getLogger(__name__).error(f"Error deleting file from storage: {str(storage_error)}")
                 # Continue with database deletion even if storage deletion fails
         
         # Remove from database completely
@@ -2789,7 +2800,7 @@ def admin_permanent_delete(file_id):
     except Exception as e:
         # Rollback any database changes
         db.session.rollback()
-        logger.error(f"Unexpected error during admin permanent deletion: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during admin permanent deletion: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Permanent deletion failed: {str(e)}'
@@ -2959,22 +2970,22 @@ def bulk_delete_files():
                             logger.warning(f"Failed to delete file from storage: {delete_result.error_message}")
                             # Continue with database deletion even if storage deletion fails
                     except Exception as storage_error:
-                        logger.error(f"Error deleting file from storage: {str(storage_error)}")
+                        logging.getLogger(__name__).error(f"Error deleting file from storage: {str(storage_error)}")
                         # Continue with database deletion even if storage deletion fails
                     
                     # Remove from database
                     db.session.delete(resume_file)
                 else:
                     # Soft delete - mark as deleted with timestamp
-                    resume_file.deleted_at = datetime.datetime.utcnow()
+                    resume_file.deleted_at = datetime.datetime.datetime.utcnow()
                     resume_file.deleted_by = current_user_id
-                    resume_file.updated_at = datetime.datetime.utcnow()
+                    resume_file.updated_at = datetime.datetime.datetime.utcnow()
                 
                 db.session.commit()
                 deleted_count += 1
                 
             except Exception as e:
-                logger.error(f"Error deleting file {file_id}: {str(e)}")
+                logging.getLogger(__name__).error(f"Error deleting file {file_id}: {str(e)}")
                 failed_files.append({
                     'file_id': file_id,
                     'error': str(e)
@@ -3007,7 +3018,7 @@ def bulk_delete_files():
         return jsonify(response_data), 200
         
     except Exception as e:
-        logger.error(f"Unexpected error during bulk file deletion: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during bulk file deletion: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error during bulk deletion: {str(e)}'
@@ -3208,7 +3219,7 @@ def process_file(file_id):
                 file_record.error_message = f"Failed to download file: {download_result.error_message}"
                 db.session.commit()
                 
-                logger.error(f"Failed to download file {file_id} for processing: {download_result.error_message}")
+                logging.getLogger(__name__).error(f"Failed to download file {file_id} for processing: {download_result.error_message}")
                 
                 return jsonify({
                     'success': False,
@@ -3266,7 +3277,7 @@ def process_file(file_id):
                 file_record.error_message = processing_result.error_message
                 
                 # Log processing failure
-                logger.error(f"File {file_id} processing failed for user {current_user_id}: {processing_result.error_message}")
+                logging.getLogger(__name__).error(f"File {file_id} processing failed for user {current_user_id}: {processing_result.error_message}")
                 
                 db.session.commit()
                 
@@ -3282,7 +3293,7 @@ def process_file(file_id):
             db.session.commit()
             
             # Log processing error
-            logger.error(f"Error processing file {file_id} for user {current_user_id}: {str(processing_error)}")
+            logging.getLogger(__name__).error(f"Error processing file {file_id} for user {current_user_id}: {str(processing_error)}")
             
             return jsonify({
                 'success': False,
@@ -3291,7 +3302,7 @@ def process_file(file_id):
             
     except Exception as e:
         # Log the error
-        logger.error(f"Unexpected error during file processing: {str(e)}")
+        logging.getLogger(__name__).error(f"Unexpected error during file processing: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Error processing file: {str(e)}'
@@ -3356,8 +3367,8 @@ def register():
     user = User(
         email=data['email'],
         username=data['email'],  # Use email as username if not provided
-        updated_at=datetime.datetime.utcnow(),
-        created_at=datetime.datetime.utcnow()
+        updated_at=datetime.datetime.datetime.utcnow(),
+        created_at=datetime.datetime.datetime.utcnow()
     )
     user.set_password(data['password'])
     
@@ -3560,7 +3571,7 @@ def request_password_reset():
         }), 200
         
     except Exception as e:
-        current_app.logger.error(f"Password reset request error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Password reset request error: {str(e)}")
         return jsonify({
             "status": "error",
             "message": "An error occurred. Please try again later."
@@ -3691,7 +3702,7 @@ def verify_password_reset():
         }), 200
         
     except Exception as e:
-        current_app.logger.error(f"Password reset verify error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Password reset verify error: {str(e)}")
         return jsonify({
             "status": "error",
             "message": "An error occurred during password reset."
@@ -3815,7 +3826,7 @@ def validate_password_reset_token():
         }), 200
         
     except Exception as e:
-        current_app.logger.error(f"Password reset validate error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Password reset validate error: {str(e)}")
         return jsonify({
             "status": "error",
             "message": "An error occurred during validation.",
@@ -3849,6 +3860,10 @@ def google_auth():
         # Get user_id from query parameter (for testing) or from token (for production)
         user_id = request.args.get('user_id')
         
+        # Handle string "None" and empty values
+        if user_id == 'None' or user_id == '' or user_id is None:
+            user_id = None
+        
         if not user_id:
             # Try to get from authentication token if provided
             auth_header = request.headers.get('Authorization')
@@ -3867,6 +3882,24 @@ def google_auth():
                 user_id = 1  # Default test user ID
             else:
                 return jsonify({"error": "User ID required"}), 400
+        
+        # Validate user_id can be converted to integer
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid user ID format"}), 400
+        
+        # Check if user exists and is an admin (admin-only restriction)
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Admin-only restriction for Google authentication
+        if not user.is_admin:
+            return jsonify({
+                "error": "Google authentication is restricted to administrators only",
+                "message": "Only administrators can connect Google Drive for file management"
+            }), 403
                 
         google_auth_service = GoogleAuthService()
         
@@ -3876,7 +3909,7 @@ def google_auth():
         return redirect(auth_url)
         
     except Exception as e:
-        current_app.logger.error(f"Google OAuth initiation error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Google OAuth initiation error: {str(e)}")
         return jsonify({"error": "Failed to initiate Google authentication"}), 500
 
 
@@ -3947,7 +3980,7 @@ def google_auth_callback():
             return jsonify({"error": message}), 400
             
     except Exception as e:
-        current_app.logger.error(f"Google OAuth callback error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Google OAuth callback error: {str(e)}")
         return jsonify({"error": "Failed to process Google authentication"}), 500
 
 
@@ -4007,19 +4040,31 @@ def google_auth_status():
             from app.models.temp import GoogleAuth
             google_auth = GoogleAuth.query.filter_by(user_id=user_id).first()
             
+            # Include persistence information
+            persistence_info = {}
+            if hasattr(google_auth, 'is_persistent'):
+                persistence_info = {
+                    'is_persistent': google_auth.is_persistent,
+                    'auto_refresh_enabled': getattr(google_auth, 'auto_refresh_enabled', True),
+                    'session_id': getattr(google_auth, 'persistent_session_id', None),
+                    'last_activity': getattr(google_auth, 'last_activity_at', None),
+                    'token_expires_at': google_auth.token_expires_at.isoformat() if google_auth.token_expires_at else None
+                }
+            
             return jsonify({
                 "authenticated": True,
                 "google_user": {
                     "email": google_auth.email,
                     "name": google_auth.name,
                     "picture": google_auth.picture
-                }
+                },
+                "persistence": persistence_info
             }), 200
         else:
             return jsonify({"authenticated": False}), 200
             
     except Exception as e:
-        current_app.logger.error(f"Google auth status error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Google auth status error: {str(e)}")
         return jsonify({"error": "Failed to check authentication status"}), 500
 
 
@@ -4074,7 +4119,7 @@ def google_auth_revoke():
             return jsonify({"error": "Failed to revoke authentication"}), 500
             
     except Exception as e:
-        current_app.logger.error(f"Google auth revoke error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Google auth revoke error: {str(e)}")
         return jsonify({"error": "Failed to revoke authentication"}), 500
 
 
@@ -4183,7 +4228,7 @@ def google_auth_store():
             return jsonify({"error": "Failed to store tokens"}), 500
             
     except Exception as e:
-        current_app.logger.error(f"Google auth store error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Google auth store error: {str(e)}")
         return jsonify({"error": "Failed to store authentication tokens"}), 500
 
 
@@ -4243,8 +4288,464 @@ def google_auth_refresh():
             return jsonify({"error": "Failed to refresh tokens"}), 401
             
     except Exception as e:
-        current_app.logger.error(f"Google auth refresh error: {str(e)}")
+        current_app.logging.getLogger(__name__).error(f"Google auth refresh error: {str(e)}")
         return jsonify({"error": "Failed to refresh authentication tokens"}), 500
+
+
+# OAuth Persistence Enhanced Endpoints
+
+@api.route('/api/auth/google/status', methods=['GET'])
+@swag_from({
+    'tags': ['OAuth Persistence'],
+    'summary': 'Get basic OAuth authentication status',
+    'description': 'Get basic OAuth authentication status for current user',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'OAuth status retrieved',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'authenticated': {'type': 'boolean'},
+                    'user_email': {'type': 'string'},
+                    'status': {'type': 'string', 'enum': ['active', 'inactive', 'expired']},
+                    'persistent_auth_enabled': {'type': 'boolean'}
+                }
+            }
+        },
+        401: {'description': 'Authentication required'},
+        500: {'description': 'Internal server error'}
+    }
+})
+@token_required
+def get_basic_oauth_status():
+    """Get basic OAuth authentication status"""
+    try:
+        from app.models.temp import GoogleAuth
+        
+        user_id = request.user.get('user_id')
+        
+        # Get Google auth record
+        auth = GoogleAuth.query.filter_by(id=user_id, is_active=True).first()
+        
+        if not auth:
+            return jsonify({
+                'authenticated': False,
+                'status': 'inactive',
+                'user_email': None,
+                'persistent_auth_enabled': False
+            }), 200
+        
+        # Check if session is expired
+        now = datetime.datetime.utcnow()
+        is_expired = auth.session_expires_at and auth.session_expires_at < now
+        
+        status = 'expired' if is_expired else ('active' if auth.is_active else 'inactive')
+        
+        return jsonify({
+            'authenticated': auth.is_active and not is_expired,
+            'status': status,
+            'user_email': auth.email,
+            'persistent_auth_enabled': getattr(auth, 'persistent_auth_enabled', False)
+        }), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Basic OAuth status error: {str(e)}")
+        return jsonify({
+            'authenticated': False,
+            'status': 'error',
+            'error': 'Failed to retrieve OAuth status'
+        }), 500
+
+
+@api.route('/api/auth/google/status/detailed', methods=['GET'])
+@swag_from({
+    'tags': ['OAuth Persistence'],
+    'summary': 'Get detailed OAuth persistence status',
+    'description': 'Get comprehensive OAuth authentication status including persistence and storage information',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'Detailed OAuth status retrieved',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'oauth_status': {
+                        'type': 'object',
+                        'properties': {
+                            'is_authenticated': {'type': 'boolean'},
+                            'is_persistent': {'type': 'boolean'},
+                            'session_id': {'type': 'string'},
+                            'token_expires_at': {'type': 'string'},
+                            'last_refresh_at': {'type': 'string'},
+                            'auto_refresh_enabled': {'type': 'boolean'},
+                            'is_active': {'type': 'boolean'}
+                        }
+                    },
+                    'storage_status': {
+                        'type': 'object',
+                        'properties': {
+                            'quota_total': {'type': 'integer'},
+                            'quota_used': {'type': 'integer'},
+                            'usage_percentage': {'type': 'number'},
+                            'warning_level': {'type': 'string'},
+                            'last_check': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        401: {'description': 'Unauthorized'},
+        403: {'description': 'Admin access required'},
+        500: {'description': 'Internal server error'}
+    }
+})
+@token_required
+def get_detailed_oauth_status():
+    """Get detailed OAuth persistence status for admin users"""
+    try:
+        from app.services.oauth_persistence_service import oauth_persistence_service
+        from app.models.temp import User, GoogleAuth
+        
+        user_id = request.user.get('user_id')
+        
+        # Verify admin privileges
+        user = User.query.get(user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required for detailed OAuth status'
+            }), 403
+        
+        # Get OAuth authentication record
+        auth = GoogleAuth.query.filter_by(user_id=user_id).first()
+        if not auth:
+            return jsonify({
+                'success': True,
+                'oauth_status': {
+                    'is_authenticated': False,
+                    'is_persistent': False,
+                    'session_id': None,
+                    'token_expires_at': None,
+                    'auto_refresh_enabled': False,
+                    'is_active': False
+                },
+                'storage_status': {
+                    'quota_total': None,
+                    'quota_used': None,
+                    'usage_percentage': 0.0,
+                    'warning_level': 'none',
+                    'last_check': None
+                }
+            }), 200
+        
+        # Get comprehensive session status
+        session_status = oauth_persistence_service.get_session_status(auth.id)
+        
+        # Check storage quota
+        quota_info = oauth_persistence_service.check_storage_quota(auth.id)
+        
+        return jsonify({
+            'success': True,
+            'oauth_status': {
+                'is_authenticated': auth.is_active,
+                'is_persistent': getattr(auth, 'is_persistent', True),
+                'session_id': getattr(auth, 'persistent_session_id', None),
+                'token_expires_at': auth.token_expires_at.isoformat() if auth.token_expires_at else None,
+                'last_refresh_at': getattr(auth, 'last_refresh_at', None),
+                'auto_refresh_enabled': getattr(auth, 'auto_refresh_enabled', True),
+                'is_active': auth.is_active
+            },
+            'storage_status': {
+                'quota_total': quota_info.total_quota if quota_info else None,
+                'quota_used': quota_info.used_quota if quota_info else None,
+                'usage_percentage': quota_info.usage_percentage if quota_info else 0.0,
+                'warning_level': quota_info.warning_level if quota_info else 'none',
+                'last_check': quota_info.last_check.isoformat() if quota_info and quota_info.last_check else None,
+                'formatted_quota': {
+                    'total': f"{quota_info.total_quota / (1024**3):.1f} GB" if quota_info and quota_info.total_quota else None,
+                    'used': f"{quota_info.used_quota / (1024**3):.1f} GB" if quota_info and quota_info.used_quota else None,
+                    'available': f"{(quota_info.total_quota - quota_info.used_quota) / (1024**3):.1f} GB" if quota_info and quota_info.total_quota and quota_info.used_quota else None
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        current_app.logging.getLogger(__name__).error(f"Detailed OAuth status error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve detailed OAuth status'
+        }), 500
+
+
+@api.route('/api/auth/google/storage/analytics', methods=['GET'])
+@swag_from({
+    'tags': ['OAuth Persistence'],
+    'summary': 'Get Google Drive storage analytics',
+    'description': 'Get detailed storage usage analytics and cleanup recommendations',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'Storage analytics retrieved',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'analytics': {
+                        'type': 'object',
+                        'properties': {
+                            'usage_by_type': {'type': 'object'},
+                            'large_files': {'type': 'array'},
+                            'recommendations': {'type': 'array'},
+                            'projected_full_date': {'type': 'string'}
+                        }
+                    }
+                }
+            }
+        },
+        401: {'description': 'Unauthorized'},
+        403: {'description': 'Admin access required'},
+        500: {'description': 'Internal server error'}
+    }
+})
+@token_required
+def get_storage_analytics():
+    """Get Google Drive storage analytics for admin users"""
+    try:
+        from app.models.temp import User, GoogleAuth
+        
+        user_id = request.user.get('user_id')
+        
+        # Verify admin privileges
+        user = User.query.get(user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required for storage analytics'
+            }), 403
+        
+        # Get OAuth authentication record
+        auth = GoogleAuth.query.filter_by(user_id=user_id).first()
+        if not auth or not auth.is_active:
+            return jsonify({
+                'success': False,
+                'error': 'Active Google authentication required'
+            }), 401
+        
+        # For now, return basic analytics
+        # In a full implementation, this would analyze Google Drive files
+        current_usage = getattr(auth, 'drive_quota_used', 0) or 0
+        total_quota = getattr(auth, 'drive_quota_total', 0) or 0
+        usage_percentage = (current_usage / total_quota * 100) if total_quota > 0 else 0
+        
+        # Generate recommendations based on usage
+        recommendations = []
+        if usage_percentage > 90:
+            recommendations.extend([
+                "Urgent: Delete unnecessary files immediately",
+                "Archive old files to free up space",
+                "Consider upgrading Google Drive storage plan"
+            ])
+        elif usage_percentage > 80:
+            recommendations.extend([
+                "Consider archiving files older than 1 year",
+                "Review and delete duplicate files",
+                "Compress large files to reduce storage usage"
+            ])
+        elif usage_percentage > 60:
+            recommendations.append("Monitor storage usage regularly")
+        
+        return jsonify({
+            'success': True,
+            'analytics': {
+                'current_usage': {
+                    'bytes': current_usage,
+                    'formatted': f"{current_usage / (1024**3):.2f} GB" if current_usage else "0 GB"
+                },
+                'total_quota': {
+                    'bytes': total_quota,
+                    'formatted': f"{total_quota / (1024**3):.1f} GB" if total_quota else "0 GB"
+                },
+                'usage_percentage': round(usage_percentage, 2),
+                'warning_level': getattr(auth, 'quota_warning_level', 'none'),
+                'recommendations': recommendations,
+                'last_check': getattr(auth, 'last_quota_check').isoformat() if hasattr(auth, 'last_quota_check') and auth.last_quota_check else None,
+                'storage_trend': 'stable'  # Could be calculated from historical data
+            }
+        }), 200
+        
+    except Exception as e:
+        current_app.logging.getLogger(__name__).error(f"Storage analytics error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to retrieve storage analytics'
+        }), 500
+
+
+@api.route('/api/auth/google/revoke/persistent', methods=['POST'])
+@swag_from({
+    'tags': ['OAuth Persistence'],
+    'summary': 'Revoke persistent OAuth authentication',
+    'description': 'Manually revoke persistent OAuth authentication and deactivate session',
+    'security': [{'Bearer': []}],
+    'parameters': [
+        {
+            'name': 'body',
+            'in': 'body',
+            'required': True,
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'confirm_revocation': {'type': 'boolean', 'description': 'Confirmation flag'},
+                    'reason': {'type': 'string', 'description': 'Reason for revocation'}
+                },
+                'required': ['confirm_revocation']
+            }
+        }
+    ],
+    'responses': {
+        200: {
+            'description': 'OAuth authentication revoked successfully',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'message': {'type': 'string'}
+                }
+            }
+        },
+        400: {'description': 'Invalid request'},
+        401: {'description': 'Unauthorized'},
+        403: {'description': 'Admin access required'},
+        500: {'description': 'Internal server error'}
+    }
+})
+@token_required
+def revoke_persistent_oauth():
+    """Revoke persistent OAuth authentication for admin users"""
+    try:
+        from app.services.oauth_persistence_service import oauth_persistence_service
+        from app.models.temp import User, GoogleAuth
+        
+        user_id = request.user.get('user_id')
+        
+        # Verify admin privileges
+        user = User.query.get(user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required for OAuth revocation'
+            }), 403
+        
+        # Parse request data
+        data = request.get_json()
+        if not data or not data.get('confirm_revocation'):
+            return jsonify({
+                'success': False,
+                'error': 'Revocation requires confirmation'
+            }), 400
+        
+        reason = data.get('reason', 'Manual admin revocation')
+        
+        # Get OAuth authentication record
+        auth = GoogleAuth.query.filter_by(user_id=user_id).first()
+        if not auth:
+            return jsonify({
+                'success': False,
+                'error': 'No OAuth session found to revoke'
+            }), 404
+        
+        # Deactivate the session
+        success = oauth_persistence_service.deactivate_session(auth.id, reason)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': 'OAuth authentication revoked successfully',
+                'revoked_at': datetime.datetime.utcnow().isoformat(),
+                'reason': reason
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to revoke OAuth authentication'
+            }), 500
+        
+    except Exception as e:
+        current_app.logging.getLogger(__name__).error(f"OAuth revocation error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to revoke OAuth authentication'
+        }), 500
+
+
+@api.route('/api/auth/google/token/refresh', methods=['POST'])
+@swag_from({
+    'tags': ['OAuth Persistence'],
+    'summary': 'Force refresh OAuth tokens',
+    'description': 'Manually trigger OAuth token refresh for testing or immediate refresh',
+    'security': [{'Bearer': []}],
+    'responses': {
+        200: {
+            'description': 'Token refresh completed',
+            'schema': {
+                'type': 'object',
+                'properties': {
+                    'success': {'type': 'boolean'},
+                    'message': {'type': 'string'},
+                    'token_expires_at': {'type': 'string'},
+                    'refresh_attempts': {'type': 'integer'}
+                }
+            }
+        },
+        401: {'description': 'Unauthorized'},
+        403: {'description': 'Admin access required'},
+        500: {'description': 'Internal server error'}
+    }
+})
+@token_required
+def force_token_refresh():
+    """Force refresh OAuth tokens for admin users"""
+    try:
+        from app.services.oauth_persistence_service import oauth_persistence_service
+        from app.models.temp import User, GoogleAuth
+        
+        user_id = request.user.get('user_id')
+        
+        # Verify admin privileges
+        user = User.query.get(user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required for token refresh'
+            }), 403
+        
+        # Get OAuth authentication record
+        auth = GoogleAuth.query.filter_by(user_id=user_id).first()
+        if not auth:
+            return jsonify({
+                'success': False,
+                'error': 'No OAuth session found'
+            }), 404
+        
+        # Force token refresh
+        refresh_result = oauth_persistence_service.refresh_token_if_needed(auth.id)
+        
+        return jsonify({
+            'success': refresh_result.success,
+            'message': refresh_result.message,
+            'token_expires_at': refresh_result.new_expires_at.isoformat() if refresh_result.new_expires_at else None,
+            'refresh_attempts': refresh_result.refresh_attempts,
+            'error_code': refresh_result.error_code
+        }), 200 if refresh_result.success else 500
+        
+    except Exception as e:
+        current_app.logging.getLogger(__name__).error(f"Force token refresh error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to refresh tokens'
+        }), 500
 
 
 @api.route('/api/save_resume', methods=['PUT'])
@@ -4330,7 +4831,7 @@ def save_resume():
             # Create new resume entry
             # Get the next serial number for this user
             existing_count = Resume.query.filter_by(user_id=user_id).count()
-            now = datetime.datetime.utcnow()  # Using standard utcnow() method
+            now = datetime.datetime.datetime.utcnow()  # Using standard utcnow() method
             
             resume = Resume(
                 user_id=user_id,
@@ -4975,8 +5476,8 @@ def export_resume_to_google_docs():
             google_doc_url=share_result['shareable_url'],
             document_title=document_data['title'],
             generation_status='created',
-            created_at=datetime.datetime.utcnow(),
-            updated_at=datetime.datetime.utcnow()
+            created_at=datetime.datetime.datetime.utcnow(),
+            updated_at=datetime.datetime.datetime.utcnow()
         )
         
         db.session.add(generated_doc)
@@ -5694,5 +6195,529 @@ def update_document_sharing(document_id):
             "error": "Failed to update sharing",
             "details": str(e)
         }), 500
+
+
+# =============================================================================
+# STORAGE MONITORING API ENDPOINTS
+# =============================================================================
+
+@api.route('/api/storage/monitoring/status', methods=['GET'])
+@token_required
+def get_storage_monitoring_status():
+    """
+    Get status of the background storage monitoring service
+    ---
+    tags:
+      - Storage Monitoring
+    security:
+      - Bearer: []
+    description: |
+      Get the current status of the background storage monitoring service,
+      including configuration, statistics, and service health.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    responses:
+      200:
+        description: Storage monitoring status retrieved successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            service_status:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                  example: true
+                running:
+                  type: boolean  
+                  example: true
+                check_interval_minutes:
+                  type: integer
+                  example: 60
+                thread_alive:
+                  type: boolean
+                  example: true
+                stats:
+                  type: object
+                  properties:
+                    service_started:
+                      type: string
+                      format: datetime
+                      example: "2024-11-25T10:30:00"
+                    last_check:
+                      type: string
+                      format: datetime
+                      example: "2024-11-25T11:30:00"
+                    total_checks:
+                      type: integer
+                      example: 15
+                    total_alerts_sent:
+                      type: integer
+                      example: 3
+                    uptime_hours:
+                      type: number
+                      example: 2.5
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Server error
+    """
+    # Verify admin access
+    try:
+        # Get user from token and check admin status
+        user = User.query.get(request.user.get('user_id'))
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required'
+            }), 403
+        
+        from app.services.background_storage_monitor import background_storage_monitor
+        
+        status = background_storage_monitor.get_status()
+        
+        return jsonify({
+            'success': True,
+            'service_status': status,
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error getting storage monitoring status: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@api.route('/api/storage/monitoring/start', methods=['POST'])
+@token_required
+def start_storage_monitoring():
+    """
+    Start the background storage monitoring service
+    ---
+    tags:
+      - Storage Monitoring
+    security:
+      - Bearer: []
+    description: |
+      Start the background storage monitoring service. The service will
+      periodically check storage quotas for all active OAuth sessions
+      and generate alerts when thresholds are exceeded.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    responses:
+      200:
+        description: Storage monitoring service started successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Storage monitoring service started (checking every 60 minutes)"
+            running:
+              type: boolean
+              example: true
+            check_interval_minutes:
+              type: integer
+              example: 60
+      400:
+        description: Service already running or configuration issue
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Failed to start service
+    """
+    try:
+        # Get user from token and check admin status
+        user = User.query.get(request.user.get('user_id'))
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required'
+            }), 403
+        
+        from app.services.background_storage_monitor import background_storage_monitor
+        
+        result = background_storage_monitor.start()
+        
+        status_code = 200 if result['success'] else 400
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error starting storage monitoring: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@api.route('/api/storage/monitoring/stop', methods=['POST'])
+@token_required
+def stop_storage_monitoring():
+    """
+    Stop the background storage monitoring service
+    ---
+    tags:
+      - Storage Monitoring
+    security:
+      - Bearer: []
+    description: |
+      Stop the background storage monitoring service. This will halt
+      all periodic storage checks and alert generation.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    responses:
+      200:
+        description: Storage monitoring service stopped successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Storage monitoring service stopped"
+            running:
+              type: boolean
+              example: false
+            final_stats:
+              type: object
+              description: Final service statistics
+      400:
+        description: Service not running or stop failed
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Failed to stop service
+    """
+    try:
+        # Get user from token and check admin status
+        user = User.query.get(request.user.get('user_id'))
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required'
+            }), 403
+        
+        from app.services.background_storage_monitor import background_storage_monitor
+        
+        result = background_storage_monitor.stop()
+        
+        status_code = 200 if result['success'] else 400
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error stopping storage monitoring: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@api.route('/api/storage/monitoring/check-now', methods=['POST'])
+@token_required  
+def force_storage_check():
+    """
+    Force an immediate storage check for all active OAuth sessions
+    ---
+    tags:
+      - Storage Monitoring
+    security:
+      - Bearer: []
+    description: |
+      Trigger an immediate storage quota check for all active OAuth sessions,
+      bypassing the normal scheduled interval. This will generate alerts
+      if any sessions exceed storage thresholds.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    responses:
+      200:
+        description: Storage check completed successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Checked storage for 3 sessions"
+            sessions_checked:
+              type: integer
+              example: 3
+            alerts_generated:
+              type: integer
+              example: 1
+            results:
+              type: array
+              items:
+                type: object
+                properties:
+                  auth_id:
+                    type: integer
+                    example: 1
+                  user_id:
+                    type: integer
+                    example: 1
+                  success:
+                    type: boolean
+                    example: true
+                  quota:
+                    type: object
+                    properties:
+                      usage_percentage:
+                        type: number
+                        example: 85.2
+                      warning_level:
+                        type: string
+                        example: "medium"
+            forced_check:
+              type: boolean
+              example: true
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Check failed
+    """
+    try:
+        # Get user from token and check admin status
+        user = User.query.get(request.user.get('user_id'))
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required'
+            }), 403
+        
+        from app.services.background_storage_monitor import background_storage_monitor
+        
+        result = background_storage_monitor.force_check_now()
+        
+        status_code = 200 if result['success'] else 500
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error during forced storage check: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'forced_check': True
+        }), 500
+
+
+@api.route('/api/storage/overview', methods=['GET'])
+@token_required
+def get_storage_overview():
+    """
+    Get storage overview for all active OAuth sessions
+    ---
+    tags:
+      - Storage Monitoring
+    security:
+      - Bearer: []
+    description: |
+      Get a comprehensive overview of storage usage across all active
+      OAuth sessions, including summary statistics and individual session details.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    responses:
+      200:
+        description: Storage overview retrieved successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            summary:
+              type: object
+              properties:
+                total_sessions:
+                  type: integer
+                  example: 5
+                sessions_with_warnings:
+                  type: integer
+                  example: 2
+                critical_sessions:
+                  type: integer
+                  example: 1
+                total_storage_used_gb:
+                  type: number
+                  example: 85.5
+                total_storage_quota_gb:
+                  type: number
+                  example: 375.0
+                overall_usage_percentage:
+                  type: number
+                  example: 22.8
+            sessions:
+              type: array
+              items:
+                type: object
+                properties:
+                  auth_id:
+                    type: integer
+                    example: 1
+                  user_id:
+                    type: integer
+                    example: 1
+                  user_email:
+                    type: string
+                    example: "user@example.com"
+                  usage_percentage:
+                    type: number
+                    example: 85.2
+                  warning_level:
+                    type: string
+                    example: "medium"
+                  last_check:
+                    type: string
+                    format: datetime
+                    example: "2024-11-25T11:30:00"
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Failed to retrieve overview
+    """
+    try:
+        # Get user from token and check admin status
+        user = User.query.get(request.user.get('user_id'))
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required'
+            }), 403
+        
+        from app.services.storage_monitoring_service import storage_monitoring_service
+        
+        result = storage_monitoring_service.get_all_storage_status()
+        
+        status_code = 200 if result['success'] else 500
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error getting storage overview: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 500
+
+
+@api.route('/api/storage/monitoring/config', methods=['PUT'])
+@token_required
+def update_storage_monitoring_config():
+    """
+    Update storage monitoring service configuration
+    ---
+    tags:
+      - Storage Monitoring
+    security:
+      - Bearer: []
+    description: |
+      Update the configuration of the background storage monitoring service,
+      such as check interval and enable/disable status.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    parameters:
+      - in: body
+        name: config
+        required: true
+        schema:
+          type: object
+          properties:
+            check_interval_minutes:
+              type: integer
+              minimum: 5
+              example: 120
+              description: Check interval in minutes (minimum 5)
+            enabled:
+              type: boolean
+              example: true
+              description: Enable or disable the monitoring service
+    responses:
+      200:
+        description: Configuration updated successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Configuration updated"
+            old_config:
+              type: object
+              description: Previous configuration
+            new_config:
+              type: object
+              description: Updated configuration
+            needs_restart:
+              type: boolean
+              example: true
+            restart_result:
+              type: object
+              description: Result of automatic restart if needed
+      400:
+        description: Invalid configuration
+      401:
+        description: Authentication required
+      403:
+        description: Admin access required
+      500:
+        description: Configuration update failed
+    """
+    try:
+        # Get user from token and check admin status
+        user = User.query.get(request.user.get('user_id'))
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'error': 'Admin access required'
+            }), 403
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No configuration data provided'
+            }), 400
+        
+        from app.services.background_storage_monitor import background_storage_monitor
+        
+        result = background_storage_monitor.update_config(
+            check_interval_minutes=data.get('check_interval_minutes'),
+            enabled=data.get('enabled')
+        )
+        
+        status_code = 200 if result['success'] else 400
+        return jsonify(result), status_code
+        
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error updating storage monitoring config: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 
 
