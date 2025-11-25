@@ -21,7 +21,7 @@ COPY core/app/docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Set environment variables
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/core
 
 # Use the entrypoint script
 ENTRYPOINT ["docker-entrypoint.sh"]

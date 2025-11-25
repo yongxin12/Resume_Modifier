@@ -9,55 +9,30 @@ while ! nc -z $DB_HOST 5432; do
 done
 echo "✅ Database is ready!"
 
-# Run database migrations
-echo "🔄 Running database migrations..."
-cd /app/core
+# Run database setup
+echo "🔄 Setting up database..."
+cd /app
 export PYTHONPATH="/app/core:$PYTHONPATH"
-export FLASK_APP=app.server
+export FLASK_APP=core.app.server
 
-# Initialize Flask-Migrate if migrations directory doesn't exist
-if [ ! -d "migrations" ]; then
-    echo "Initializing Flask-Migrate..."
-    python -c "
-import sys
-import os
-sys.path.insert(0, '/app/core')
-
-from app import create_app
-from flask_migrate import init
-from app.extensions import db
-
-app = create_app()
-with app.app_context():
-    try:
-        print('Initializing migrations...')
-        init()
-        print('✅ Migrations initialized')
-    except Exception as e:
-        print(f'Migration init error: {e}')
-"
-fi
-
+# Simple database setup - just create tables directly
 python -c "
 import sys
 import os
 sys.path.insert(0, '/app/core')
 
 from app import create_app
-from flask_migrate import upgrade
 from app.extensions import db
 
 app = create_app()
 with app.app_context():
     try:
-        print('Running migrations...')
-        upgrade()
-        print('✅ Migrations completed successfully')
-    except Exception as e:
-        print(f'Migration error: {e}')
-        print('Creating tables directly...')
+        print('Creating database tables...')
         db.create_all()
-        print('✅ Tables created via SQLAlchemy')
+        print('✅ Database tables created successfully')
+    except Exception as e:
+        print(f'Database setup error: {e}')
+        # Try to continue anyway
 "
 
 echo "🚀 Starting Flask application..."
