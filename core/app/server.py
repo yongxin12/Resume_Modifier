@@ -754,11 +754,14 @@ def upload_file():
                 
                 # Upload to Google Drive
                 uploaded_file.seek(0)  # Reset file pointer
-                drive_file_id = google_drive_service.upload_file_to_drive(
-                    uploaded_file, 
-                    duplicate_result['display_filename'],
-                    current_user_email if current_user_email else None
+                file_content = uploaded_file.read()
+                drive_result = google_drive_service.upload_file_to_drive(
+                    file_content=file_content,
+                    filename=duplicate_result['display_filename'],
+                    mime_type=mime_type,
+                    user_id=current_user.id
                 )
+                drive_file_id = drive_result.get('file_id') if drive_result else None
                 
                 if drive_file_id:
                     google_drive_file_id = drive_file_id
