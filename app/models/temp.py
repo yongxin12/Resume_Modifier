@@ -1,4 +1,12 @@
 from typing import Dict, Any, List
+import sys
+import os
+
+# Add core to Python path for imports
+core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../core'))
+if core_path not in sys.path:
+    sys.path.insert(0, core_path)
+
 from app.extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_sqlalchemy import SQLAlchemy 

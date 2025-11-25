@@ -24,7 +24,7 @@ from app.services.file_storage_service import FileStorageService
 from app.services.file_processing_service import FileProcessingService
 from app.services.thumbnail_service import ThumbnailService
 from googleapiclient.errors import HttpError
-import datetime
+from datetime import datetime
 import logging
 import io
 import os
@@ -88,7 +88,7 @@ def health_check():
     health_status = {
         "status": "healthy",
         "service": "Resume Editor API",
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "timestamp": datetime.utcnow().isoformat(),
         "components": {}
     }
     
@@ -1856,9 +1856,9 @@ def delete_file(file_id):
         else:
             # Soft delete: mark as deleted with timestamp and set is_active=False
             resume_file.is_active = False
-            resume_file.deleted_at = datetime.datetime.datetime.utcnow()
+            resume_file.deleted_at = datetime.utcnow()
             resume_file.deleted_by = current_user_id
-            resume_file.updated_at = datetime.datetime.datetime.utcnow()
+            resume_file.updated_at = datetime.utcnow()
             delete_type = 'soft'
         
         # Commit the database changes
@@ -2322,7 +2322,7 @@ def restore_file(file_id):
         # Restore the file
         resume_file.deleted_at = None
         resume_file.deleted_by = None
-        resume_file.updated_at = datetime.datetime.datetime.utcnow()
+        resume_file.updated_at = datetime.utcnow()
         
         # Commit the database changes
         db.session.commit()
@@ -2650,7 +2650,7 @@ def admin_restore_file(file_id):
         # Restore the file
         resume_file.deleted_at = None
         resume_file.deleted_by = None
-        resume_file.updated_at = datetime.datetime.datetime.utcnow()
+        resume_file.updated_at = datetime.utcnow()
         
         # Commit the database changes
         db.session.commit()
@@ -2977,9 +2977,9 @@ def bulk_delete_files():
                     db.session.delete(resume_file)
                 else:
                     # Soft delete - mark as deleted with timestamp
-                    resume_file.deleted_at = datetime.datetime.datetime.utcnow()
+                    resume_file.deleted_at = datetime.utcnow()
                     resume_file.deleted_by = current_user_id
-                    resume_file.updated_at = datetime.datetime.datetime.utcnow()
+                    resume_file.updated_at = datetime.utcnow()
                 
                 db.session.commit()
                 deleted_count += 1
@@ -3367,8 +3367,8 @@ def register():
     user = User(
         email=data['email'],
         username=data['email'],  # Use email as username if not provided
-        updated_at=datetime.datetime.datetime.utcnow(),
-        created_at=datetime.datetime.datetime.utcnow()
+        updated_at=datetime.utcnow(),
+        created_at=datetime.utcnow()
     )
     user.set_password(data['password'])
     
@@ -4337,7 +4337,7 @@ def get_basic_oauth_status():
             }), 200
         
         # Check if session is expired
-        now = datetime.datetime.utcnow()
+        now = datetime.utcnow()
         is_expired = auth.session_expires_at and auth.session_expires_at < now
         
         status = 'expired' if is_expired else ('active' if auth.is_active else 'inactive')
@@ -4663,7 +4663,7 @@ def revoke_persistent_oauth():
             return jsonify({
                 'success': True,
                 'message': 'OAuth authentication revoked successfully',
-                'revoked_at': datetime.datetime.utcnow().isoformat(),
+                'revoked_at': datetime.utcnow().isoformat(),
                 'reason': reason
             }), 200
         else:
@@ -4831,7 +4831,7 @@ def save_resume():
             # Create new resume entry
             # Get the next serial number for this user
             existing_count = Resume.query.filter_by(user_id=user_id).count()
-            now = datetime.datetime.datetime.utcnow()  # Using standard utcnow() method
+            now = datetime.utcnow()  # Using standard utcnow() method
             
             resume = Resume(
                 user_id=user_id,
@@ -5476,8 +5476,8 @@ def export_resume_to_google_docs():
             google_doc_url=share_result['shareable_url'],
             document_title=document_data['title'],
             generation_status='created',
-            created_at=datetime.datetime.datetime.utcnow(),
-            updated_at=datetime.datetime.datetime.utcnow()
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
         )
         
         db.session.add(generated_doc)
@@ -6284,7 +6284,7 @@ def get_storage_monitoring_status():
         return jsonify({
             'success': True,
             'service_status': status,
-            'timestamp': datetime.datetime.utcnow().isoformat()
+            'timestamp': datetime.utcnow().isoformat()
         }), 200
         
     except Exception as e:
@@ -6617,7 +6617,7 @@ def get_storage_overview():
         return jsonify({
             'success': False,
             'error': str(e),
-            'timestamp': datetime.datetime.utcnow().isoformat()
+            'timestamp': datetime.utcnow().isoformat()
         }), 500
 
 

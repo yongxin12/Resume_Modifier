@@ -28,8 +28,8 @@ class User(db.Model):
     job_descriptions = db.relationship('JobDescription', back_populates='user', lazy='dynamic')
     resume_files = db.relationship('ResumeFile', foreign_keys='ResumeFile.user_id', back_populates='user', lazy='dynamic')
 
-    updated_at = db.Column(db.DateTime, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     
     
 
@@ -466,6 +466,18 @@ class ResumeFile(db.Model):
         self.thumbnail_status = 'failed'
         self.thumbnail_generated_at = None
         self.thumbnail_error = error_message
+    
+    def get_thumbnail_path(self) -> str:
+        """Get the expected thumbnail file path for this file."""
+        from flask import current_app
+        import os
+        upload_folder = current_app.config.get('UPLOAD_FOLDER', 'uploads')
+        thumbnail_dir = os.path.join(upload_folder, 'thumbnails')
+        return os.path.join(thumbnail_dir, f'{self.id}.jpg')
+    
+    def get_thumbnail_url(self) -> str:
+        """Get the URL for this file's thumbnail."""
+        return f'/api/files/{self.id}/thumbnail'
     
     def soft_delete(self, deleted_by_user_id: int):
         """Mark file as soft deleted."""
