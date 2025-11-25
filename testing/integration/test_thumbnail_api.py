@@ -7,6 +7,7 @@ import pytest
 import os
 import tempfile
 import shutil
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 import json
 from io import BytesIO
@@ -51,8 +52,9 @@ class TestThumbnailAPI:
         """Create sample user for testing"""
         with app.app_context():
             user = User(
+                username='testuser',
                 email='test@example.com',
-                password_hash='hashed_password',
+                password='hashed_password',
                 first_name='Test',
                 last_name='User'
             )
@@ -65,14 +67,18 @@ class TestThumbnailAPI:
         """Generate auth token for testing"""
         with app.app_context():
             from app.utils.jwt_utils import generate_token
-            return generate_token(sample_user.id)
+            # Re-attach user to session to access id and email
+            user = db.session.merge(sample_user)
+            return generate_token(user.id, user.email)
     
     @pytest.fixture
     def sample_resume_file(self, app, sample_user):
         """Create sample resume file for testing"""
         with app.app_context():
+            # Re-attach user to session to access id
+            user = db.session.merge(sample_user)
             resume_file = ResumeFile(
-                user_id=sample_user.id,
+                user_id=user.id,
                 original_filename='test_resume.pdf',
                 stored_filename='test_resume_stored.pdf',
                 file_size=100000,
@@ -85,7 +91,8 @@ class TestThumbnailAPI:
                 extracted_text='Test resume content',
                 has_thumbnail=True,
                 thumbnail_status='completed',
-                thumbnail_path='/uploads/thumbnails/1.jpg'
+                thumbnail_path='/uploads/thumbnails/1.jpg',
+                thumbnail_generated_at=datetime.utcnow()
             )
             db.session.add(resume_file)
             db.session.commit()
@@ -95,8 +102,10 @@ class TestThumbnailAPI:
     def sample_resume_file_no_thumbnail(self, app, sample_user):
         """Create sample resume file without thumbnail"""
         with app.app_context():
+            # Re-attach user to session to access id
+            user = db.session.merge(sample_user)
             resume_file = ResumeFile(
-                user_id=sample_user.id,
+                user_id=user.id,
                 original_filename='test_resume_no_thumb.pdf',
                 stored_filename='test_resume_no_thumb_stored.pdf',
                 file_size=50000,
@@ -117,9 +126,11 @@ class TestThumbnailAPI:
     def test_file_info_includes_thumbnail_data(self, client, app, sample_resume_file, auth_token):
         """Test that file info endpoint includes thumbnail information"""
         with app.app_context():
+            # Re-attach file to session to access id
+            file = db.session.merge(sample_resume_file)
             headers = {'Authorization': f'Bearer {auth_token}'}
             
-            response = client.get(f'/api/files/{sample_resume_file.id}/info', headers=headers)
+            response = client.get(f'/api/files/{file.id}/info', headers=headers)
             
             assert response.status_code == 200
             
@@ -129,16 +140,18 @@ class TestThumbnailAPI:
             
             thumbnail_info = data['file']['thumbnail']
             assert thumbnail_info['has_thumbnail'] is True
-            assert thumbnail_info['thumbnail_url'] == f'/api/files/{sample_resume_file.id}/thumbnail'
+            assert thumbnail_info['thumbnail_url'] == f'/api/files/{file.id}/thumbnail'
             assert thumbnail_info['thumbnail_status'] == 'completed'
             assert thumbnail_info['thumbnail_generated_at'] is not None
     
     def test_file_info_no_thumbnail(self, client, app, sample_resume_file_no_thumbnail, auth_token):
         """Test file info for file without thumbnail"""
         with app.app_context():
+            # Re-attach file to session to access id
+            file = db.session.merge(sample_resume_file_no_thumbnail)
             headers = {'Authorization': f'Bearer {auth_token}'}
             
-            response = client.get(f'/api/files/{sample_resume_file_no_thumbnail.id}/info', headers=headers)
+            response = client.get(f'/api/files/{file.id}/info', headers=headers)
             
             assert response.status_code == 200
             
@@ -154,7 +167,9 @@ class TestThumbnailAPI:
     def test_thumbnail_endpoint_requires_authentication(self, client, app, sample_resume_file):
         """Test that thumbnail endpoint requires authentication"""
         with app.app_context():
-            response = client.get(f'/api/files/{sample_resume_file.id}/thumbnail')
+            # Re-attach file to session to access id
+            file = db.session.merge(sample_resume_file)
+            response = client.get(f'/api/files/{file.id}/thumbnail')
             
             assert response.status_code == 401
     
@@ -163,8 +178,9 @@ class TestThumbnailAPI:
         with app.app_context():
             # Create another user and their file
             other_user = User(
+                username='otheruser',
                 email='other@example.com',
-                password_hash='hashed_password',
+                password='hashed_password',
                 first_name='Other',
                 last_name='User'
             )
@@ -201,12 +217,14 @@ class TestThumbnailAPI:
                                                          client, app, sample_resume_file, auth_token):
         """Test serving existing thumbnail file"""
         with app.app_context():
+            # Re-attach file to session to access id
+            file = db.session.merge(sample_resume_file)
             mock_exists.return_value = True
             mock_send_file.return_value = MagicMock()
             
             headers = {'Authorization': f'Bearer {auth_token}'}
             
-            response = client.get(f'/api/files/{sample_resume_file.id}/thumbnail', headers=headers)
+            response = client.get(f'/api/files/{file.id}/thumbnail', headers=headers)
             
             # The actual response will be mocked, but we can verify the call
             mock_send_file.assert_called_once()
@@ -232,9 +250,11 @@ class TestThumbnailAPI:
             mock_exists.side_effect = exists_side_effect
             mock_send_file.return_value = MagicMock()
             
+            # Re-attach file to session to access id
+            file = db.session.merge(sample_resume_file_no_thumbnail)
             headers = {'Authorization': f'Bearer {auth_token}'}
             
-            response = client.get(f'/api/files/{sample_resume_file_no_thumbnail.id}/thumbnail', headers=headers)
+            response = client.get(f'/api/files/{file.id}/thumbnail', headers=headers)
             
             # Should serve default thumbnail
             mock_send_file.assert_called_once()
@@ -248,9 +268,11 @@ class TestThumbnailAPI:
         """Test 404 response when neither thumbnail nor default exists"""
         with app.app_context():
             with patch('os.path.exists', return_value=False):
+                # Re-attach file to session to access id
+                file = db.session.merge(sample_resume_file_no_thumbnail)
                 headers = {'Authorization': f'Bearer {auth_token}'}
                 
-                response = client.get(f'/api/files/{sample_resume_file_no_thumbnail.id}/thumbnail', headers=headers)
+                response = client.get(f'/api/files/{file.id}/thumbnail', headers=headers)
                 
                 assert response.status_code == 404
                 data = response.get_json()
@@ -299,9 +321,11 @@ class TestThumbnailAPI:
     def test_file_info_backwards_compatibility(self, client, app, sample_resume_file, auth_token):
         """Test that adding thumbnail info doesn't break existing functionality"""
         with app.app_context():
+            # Re-attach file to session to access id
+            file = db.session.merge(sample_resume_file)
             headers = {'Authorization': f'Bearer {auth_token}'}
             
-            response = client.get(f'/api/files/{sample_resume_file.id}/info', headers=headers)
+            response = client.get(f'/api/files/{file.id}/info', headers=headers)
             
             assert response.status_code == 200
             
@@ -338,9 +362,11 @@ class TestThumbnailAPI:
                     mock_response.headers = {}
                     mock_send_file.return_value = mock_response
                     
+                    # Re-attach file to session to access id
+                    file = db.session.merge(sample_resume_file)
                     headers = {'Authorization': f'Bearer {auth_token}'}
                     
-                    response = client.get(f'/api/files/{sample_resume_file.id}/thumbnail', headers=headers)
+                    response = client.get(f'/api/files/{file.id}/thumbnail', headers=headers)
                     
                     # Verify send_file was called with correct cache settings
                     mock_send_file.assert_called_once()

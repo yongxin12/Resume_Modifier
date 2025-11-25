@@ -18,7 +18,7 @@ from io import BytesIO
 from unittest.mock import Mock, patch, MagicMock
 from flask import Flask
 import flask
-import datetime
+from datetime import datetime
 
 # Add core directory to Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'core'))
@@ -458,7 +458,7 @@ class TestEnhancedFileAPI:
                 stored_filename='stored_resume.pdf',
                 file_size=1024,
                 mime_type='application/pdf',
-                deleted_at=datetime.datetime.utcnow(),
+                deleted_at=datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
@@ -536,7 +536,7 @@ class TestEnhancedFileAPI:
                 stored_filename='stored_deleted.pdf',
                 file_size=2048,
                 mime_type='application/pdf',
-                deleted_at=datetime.datetime.utcnow(),
+                deleted_at=datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
@@ -570,7 +570,7 @@ class TestEnhancedFileAPI:
                 stored_filename='stored_resume.pdf',
                 file_size=1024,
                 mime_type='application/pdf',
-                deleted_at=datetime.datetime.utcnow(),
+                deleted_at=datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
@@ -603,7 +603,7 @@ class TestEnhancedFileAPI:
                 stored_filename='stored_resume.pdf',
                 file_size=1024,
                 mime_type='application/pdf',
-                deleted_at=datetime.datetime.utcnow(),
+                deleted_at=datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
@@ -661,7 +661,7 @@ class TestEnhancedFileAPI:
                 file_size=2048,
                 mime_type='application/pdf',
                 is_active=False,
-                deleted_at=datetime.datetime.utcnow(),
+                deleted_at=datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
@@ -705,7 +705,7 @@ class TestEnhancedFileAPI:
                 file_size=2048,
                 mime_type='application/pdf',
                 is_active=False,
-                deleted_at=datetime.datetime.utcnow(),
+                deleted_at=datetime.utcnow(),
                 deleted_by=test_user.id
             )
             db.session.add(deleted_file)
