@@ -29,11 +29,12 @@ The tool aims to serve North American and global job seekers by integrating Data
 | **API-03c** | **Password Reset Request API**           | As a user, I want to request a password reset via email when I forget my password.                        | `/api/auth/password-reset/request` POST endpoint accepts email, generates secure token, sends reset email, returns confirmation message.          |
 | **API-03d** | **Password Reset Verification API**      | As a user, I want to verify my reset token and set a new password securely.                               | `/api/auth/password-reset/verify` POST endpoint accepts token and new password, validates token, updates password hash, invalidates token.        |
 | **API-03e** | **Password Reset Token Validation API**  | As a user, I want to check if my password reset token is valid before submitting a new password.          | `/api/auth/password-reset/validate` GET endpoint accepts token parameter, returns validity status and expiration info without consuming token.    |
+| **API-03f** | **Admin User Management**                | As an administrator, I need specific user accounts to have admin privileges for Google Drive integration management. | User model includes `is_admin` boolean field. Only admin users can authenticate with Google and manage centralized Google Drive storage. |
 | **API-04** | **Automatic API Documentation**          | As a developer, I want to automatically generate API docs so endpoints are always documented.              | Swagger UI or Redoc is auto-generated from FastAPI routes and available at `/docs` or `/api/docs`.                                                |
 | **API-05** | **File Upload Management**               | As a user, I want to upload PDFs or other resume file formats to store documents, enabling me to delete or download these files, or use them for resume processing. | `/files/upload` POST endpoint accepts PDF or DOCX, stores in cloud/local storage, and returns file metadata including file ID and extracted text preview. |
 | **API-05e** | **Duplicate File Handling**              | As a user, I want to receive notifications when uploading duplicate resume PDF files; files with identical names should be distinguished by appending a sequential duplicate number, e.g., (1). | System detects duplicate file hashes, displays notification, and saves with incremented filename like "Resume.pdf", "Resume (1).pdf", "Resume (2).pdf". |
-| **API-05f** | **Google Drive Integration**             | As a node administrator or developer, I want all uploaded documents to be stored simultaneously in both the database and the administrator's Google Drive. | Each uploaded file is automatically stored in designated Google Drive folder with proper organization by user and date. |
-| **API-05g** | **Google Drive Sharing**                 | As a node administrator or developer, I want to share the Google Doc link for uploaded files in Google Drive with the file owner, granting them edit permissions and allowing them to save the file directly to my Google Drive. | After upload, system converts PDF/DOCX to Google Doc, shares with user email with edit permissions, and returns shareable link. |
+| **API-05f** | **Google Drive Integration (Admin Only)** | As an administrator, I want all uploaded documents to be stored simultaneously in both the database and the administrator's Google Drive using admin-only Google authentication. | Each uploaded file is automatically stored in admin's Google Drive folder using admin's authenticated Google account. Only administrators can authenticate with Google. |
+| **API-05g** | **Google Drive Sharing (Admin-Controlled)** | As an administrator, I want to share Google Doc links for uploaded files from my Google Drive with file owners, granting them edit permissions while maintaining centralized storage control. | After upload to admin's Google Drive, system converts PDF/DOCX to Google Doc, makes publicly editable via link, and provides shareable link only to file owner. |
 | **API-05h** | **Soft Deletion System**                 | As a node administrator or developer, I need to implement soft deletion functionality to preserve all data in case of user errors. | Files are marked as deleted (`is_active=false`) but preserved in database and storage. Admin interface allows restoration of deleted files. |
 | **API-05i** | **Google Doc Link Access**               | As a user, I want to obtain the Google Doc link for uploaded files to make modifications. | `/files/{id}/google-doc` GET endpoint returns Google Doc link with edit permissions for the user to collaborate on their document. |
 | **API-05j** | **Deleted Files Filtering**              | As a user, I do not want to see deleted files. | All file listing APIs automatically filter out soft-deleted files (`is_active=false`) unless admin explicitly requests to see deleted files. |
@@ -55,7 +56,9 @@ The tool aims to serve North American and global job seekers by integrating Data
 | **API-09** | **Scoring Breakdown**                    | As a user, I want to see detailed evaluation of my resume quality.                                         | Output JSON format:<br>`{ "overall_score": 85, "keyword_match": 88, "language_expression": 80, "ats_readability": 87 }`                           |
 | **API-10** | **Frontend Integration with Backend**    | As a developer, I want the frontend to consume APIs correctly so users can see live data.                  | CORS configured, frontend can access backend routes securely. All major endpoints return consistent JSON structure.                               |
 | **API-11** | **Resume Template Management**           | As a user, I want to select from multiple resume templates for professional formatting.                    | `/templates` GET endpoint returns available templates. Templates stored as structured data with styling rules and layout definitions.              |
-| **API-12** | **Google Docs Authentication**           | As a user, I want to authenticate with Google to enable document export functionality.                     | OAuth 2.0 flow for Google Docs API access. `/auth/google` endpoint handles authentication and stores tokens securely.                             |
+| **API-12** | **Google Docs Authentication (Admin Only)** | As an administrator, I want to authenticate with Google to enable document storage and sharing functionality for all users. | OAuth 2.0 flow for Google Docs API access. `/auth/google` endpoint restricted to administrators only. Handles authentication and stores tokens securely. |
+| **API-12a** | **Persistent OAuth Authentication** | As an administrator, after completing OAuth authentication, I do not wish to repeat the process each time. I prefer to maintain the authenticated state until receiving a warning when storage space is nearly full. | System maintains OAuth token persistence with automatic refresh, eliminating need for re-authentication. Authentication state persists across sessions until manual revocation or storage warnings. |
+| **API-12b** | **Google Drive Storage Monitoring** | As an administrator, I want to receive warnings when Google Drive storage space is nearly full to manage storage capacity proactively. | System monitors Google Drive storage usage and sends warnings at 80%, 90%, and 95% capacity thresholds. Provides storage usage analytics and cleanup recommendations. |
 | **API-13** | **Resume Generation API**                | As a user, I want to generate a professionally formatted resume using my data and selected template.       | `/resume/generate` POST endpoint combines user data from uploaded files, job description, and template to create formatted resume content.          |
 | **API-14** | **Google Docs Export API**               | As a user, I want to export my generated resume as a Google Doc for professional presentation.             | `/resume/export/gdocs` POST endpoint creates Google Doc from file_id or generated content, applies formatting, and returns shareable link.          |
 | **API-15** | **Document Format Export**               | As a user, I want to download my resume in multiple formats (PDF, DOCX) from Google Docs.                 | Uses Google Drive API to export created document in PDF/DOCX format and returns downloadable file or streaming response.                          |
@@ -127,7 +130,35 @@ The tool aims to serve North American and global job seekers by integrating Data
 
   * Job data cache
   * Resume metadata and scoring history
-  * User identifiers (optional)
+  * User identifiers with admin privileges
+  * Google authentication tokens (admin only)
+
+#### **Enhanced User Model for Admin Management**
+```python
+class User(db.Model):
+    __tablename__ = 'users'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    first_name = db.Column(db.String(50))
+    last_name = db.Column(db.String(50))
+    city = db.Column(db.String(100))
+    bio = db.Column(db.String(200))
+    country = db.Column(db.String(100))
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)  # Admin privilege for Google Drive access
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+```
+
+**Admin User Management:**
+- Only users with `is_admin=True` can authenticate with Google OAuth
+- Admin users manage centralized Google Drive storage for all uploaded files
+- First registered user is automatically made admin during database setup
+- Additional admin users can be created manually by existing admins
 
 ### **API Documentation**
 
@@ -1082,6 +1113,509 @@ MAIL_SETTINGS = {
 
 ---
 
+### **OAuth Persistence System for Administrator (NEW)**
+
+#### **Overview**
+Enhanced OAuth authentication system that maintains persistent Google authentication state for administrators, eliminating repeated authentication flows while providing storage monitoring capabilities to ensure optimal Google Drive usage.
+
+#### **Enhanced Database Model: GoogleAuth (Updated)**
+```python
+class GoogleAuth(db.Model):
+    __tablename__ = 'google_auth_tokens'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    google_user_id = db.Column(db.String(100))  # Google user ID
+    email = db.Column(db.String(100))  # Google email
+    name = db.Column(db.String(200))  # Google display name
+    picture = db.Column(db.String(500))  # Google profile picture URL
+    access_token = db.Column(db.Text, nullable=False)
+    refresh_token = db.Column(db.Text, nullable=False)
+    token_expires_at = db.Column(db.DateTime, nullable=False)
+    scope = db.Column(db.String(500), nullable=False)  # Granted OAuth scopes
+    
+    # OAuth Persistence Fields (NEW)
+    is_persistent = db.Column(db.Boolean, default=True, nullable=False)  # Enable persistence
+    auto_refresh_enabled = db.Column(db.Boolean, default=True, nullable=False)  # Auto-refresh tokens
+    last_refresh_at = db.Column(db.DateTime, nullable=True)  # Last token refresh timestamp
+    refresh_attempts = db.Column(db.Integer, default=0, nullable=False)  # Count of refresh attempts
+    max_refresh_failures = db.Column(db.Integer, default=5, nullable=False)  # Max failures before deactivation
+    
+    # Storage Monitoring Fields (NEW)
+    drive_quota_total = db.Column(db.BigInteger, nullable=True)  # Total Google Drive quota in bytes
+    drive_quota_used = db.Column(db.BigInteger, nullable=True)  # Used Google Drive space in bytes
+    last_quota_check = db.Column(db.DateTime, nullable=True)  # Last quota check timestamp
+    quota_warning_level = db.Column(db.String(20), nullable=True)  # Current warning level: none, low, medium, high, critical
+    quota_warnings_sent = db.Column(db.JSON, nullable=True, default=list)  # History of warnings sent
+    
+    # Session and Security Fields (NEW)
+    persistent_session_id = db.Column(db.String(128), nullable=True, unique=True)  # Unique session identifier
+    last_activity_at = db.Column(db.DateTime, nullable=True)  # Last API activity timestamp
+    is_active = db.Column(db.Boolean, default=True, nullable=False)  # Active status
+    deactivated_reason = db.Column(db.String(100), nullable=True)  # Reason for deactivation
+    deactivated_at = db.Column(db.DateTime, nullable=True)  # Deactivation timestamp
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = db.relationship('User', backref='google_auth', lazy=True)
+    
+    # Constraints
+    __table_args__ = (
+        db.UniqueConstraint('user_id', name='unique_user_google_auth'),
+        db.CheckConstraint('refresh_attempts >= 0', name='check_positive_refresh_attempts'),
+        db.CheckConstraint('max_refresh_failures > 0', name='check_positive_max_failures'),
+        db.CheckConstraint("quota_warning_level IN ('none', 'low', 'medium', 'high', 'critical')", name='check_valid_warning_level'),
+        db.Index('idx_google_auth_session', 'persistent_session_id'),
+        db.Index('idx_google_auth_active', 'is_active', 'user_id'),
+        db.Index('idx_google_auth_expires', 'token_expires_at'),
+        db.Index('idx_google_auth_quota_check', 'last_quota_check'),
+    )
+```
+
+#### **Persistent Authentication Workflow (API-12a)**
+
+**Initial OAuth Setup:**
+```
+1. Administrator initiates OAuth via /auth/google?user_id={admin_user_id}
+2. System validates user has admin privileges (is_admin=True)
+3. Redirect to Google OAuth with required scopes:
+   - https://www.googleapis.com/auth/documents
+   - https://www.googleapis.com/auth/drive
+   - https://www.googleapis.com/auth/drive.file
+   - https://www.googleapis.com/auth/drive.metadata.readonly
+4. Handle OAuth callback and exchange authorization code for tokens
+5. Create GoogleAuth record with persistence enabled by default
+6. Generate unique persistent_session_id for long-term authentication
+7. Store tokens with auto-refresh enabled
+8. Return success confirmation with session info
+```
+
+**Automatic Token Refresh System:**
+```
+1. Background service checks token expiration every 15 minutes
+2. For tokens expiring within 5 minutes:
+   a. Attempt refresh using refresh_token
+   b. Update access_token and token_expires_at
+   c. Increment refresh_attempts counter
+   d. Record last_refresh_at timestamp
+3. On successful refresh:
+   a. Reset refresh_attempts counter to 0
+   b. Update last_activity_at
+   c. Continue normal operation
+4. On refresh failure:
+   a. Increment refresh_attempts
+   b. If attempts < max_refresh_failures: retry with exponential backoff
+   c. If attempts >= max_refresh_failures: deactivate authentication
+   d. Send notification to administrator about authentication failure
+```
+
+**Session Persistence Management:**
+```
+1. Each API request validates persistent_session_id
+2. Update last_activity_at on successful API calls
+3. Maintain authentication state across application restarts
+4. No re-authentication required unless:
+   a. Administrator manually revokes access
+   b. Token refresh fails repeatedly
+   c. Google revokes application access
+   d. Storage quota reaches critical levels (95%+)
+```
+
+#### **Storage Monitoring Workflow (API-12b)**
+
+**Quota Monitoring Service:**
+```
+1. Scheduled task runs every 6 hours to check Google Drive quota
+2. Call Google Drive API to get storage information:
+   GET https://www.googleapis.com/drive/v3/about?fields=storageQuota
+3. Parse response for:
+   - storageQuota.limit (total available space)
+   - storageQuota.usage (total used space)
+   - storageQuota.usageInDrive (space used by Drive files)
+4. Calculate usage percentage: (used / total) * 100
+5. Update GoogleAuth record with current quota information
+6. Determine warning level based on usage percentage
+7. Send notifications if warning thresholds crossed
+```
+
+**Warning Level Definitions:**
+- **None (0-79%)**: Normal usage, no warnings
+- **Low (80-84%)**: First warning, suggest cleanup
+- **Medium (85-89%)**: Second warning, recommend action
+- **High (90-94%)**: Urgent warning, immediate attention needed
+- **Critical (95-100%)**: Emergency level, may disable new uploads
+
+**Storage Warning System:**
+```python
+STORAGE_WARNING_THRESHOLDS = {
+    'low': 80,      # 80% - First warning
+    'medium': 85,   # 85% - Second warning  
+    'high': 90,     # 90% - Urgent warning
+    'critical': 95  # 95% - Critical warning
+}
+
+WARNING_ACTIONS = {
+    'low': {
+        'message': 'Google Drive storage is 80% full. Consider archiving old files.',
+        'action': 'log_warning'
+    },
+    'medium': {
+        'message': 'Google Drive storage is 85% full. Please review and delete unnecessary files.',
+        'action': 'email_admin'
+    },
+    'high': {
+        'message': 'Google Drive storage is 90% full. Immediate cleanup required to prevent service interruption.',
+        'action': ['email_admin', 'dashboard_alert']
+    },
+    'critical': {
+        'message': 'Google Drive storage is 95% full. New file uploads may be disabled.',
+        'action': ['email_admin', 'dashboard_alert', 'disable_uploads']
+    }
+}
+```
+
+#### **Enhanced API Endpoints**
+
+**OAuth Status Check (NEW):**
+```
+GET /api/auth/google/status
+- Returns current OAuth authentication status for admin users
+- Includes token validity, storage quota, and warning levels
+- Requires admin authentication
+```
+
+**Response Example:**
+```json
+{
+  "success": true,
+  "oauth_status": {
+    "is_authenticated": true,
+    "is_persistent": true,
+    "session_id": "abc123def456ghi789",
+    "token_expires_at": "2025-12-22T10:30:00Z",
+    "last_refresh_at": "2025-11-22T08:15:00Z",
+    "auto_refresh_enabled": true,
+    "is_active": true
+  },
+  "storage_status": {
+    "quota_total": 17179869184,  // 16 GB
+    "quota_used": 13743895347,   // 12.8 GB  
+    "usage_percentage": 80.0,
+    "warning_level": "low",
+    "last_check": "2025-11-22T12:00:00Z",
+    "formatted_quota": {
+      "total": "16.0 GB",
+      "used": "12.8 GB", 
+      "available": "3.2 GB"
+    }
+  }
+}
+```
+
+**OAuth Revocation (NEW):**
+```
+POST /api/auth/google/revoke
+- Manually revoke OAuth authentication
+- Deactivates persistent session
+- Requires admin authentication and confirmation
+```
+
+**Request Example:**
+```json
+{
+  "confirm_revocation": true,
+  "reason": "Manual admin revocation"
+}
+```
+
+**Storage Analytics (NEW):**
+```
+GET /api/auth/google/storage/analytics
+- Detailed storage usage analytics
+- File type breakdown, large file identification
+- Storage trends and cleanup recommendations
+```
+
+**Response Example:**
+```json
+{
+  "success": true,
+  "analytics": {
+    "usage_by_type": {
+      "documents": {"count": 150, "size": 8589934592, "percentage": 50.0},
+      "pdfs": {"count": 300, "size": 6442450944, "percentage": 37.5},
+      "images": {"count": 75, "size": 2147483648, "percentage": 12.5}
+    },
+    "large_files": [
+      {
+        "name": "Large_Portfolio.pdf", 
+        "size": 52428800,
+        "formatted_size": "50 MB",
+        "created": "2025-01-15T10:30:00Z"
+      }
+    ],
+    "recommendations": [
+      "Consider archiving files older than 1 year",
+      "Compress large PDF files to reduce storage usage",
+      "Delete duplicate files found in analysis"
+    ],
+    "projected_full_date": "2025-12-15T00:00:00Z"
+  }
+}
+```
+
+#### **Background Services**
+
+**Token Refresh Service:**
+```python
+class OAuthTokenRefreshService:
+    def __init__(self):
+        self.refresh_interval = 900  # 15 minutes
+        self.expiry_threshold = 300   # 5 minutes
+        
+    def run_refresh_check(self):
+        """Check and refresh expiring tokens"""
+        expiring_soon = datetime.utcnow() + timedelta(seconds=self.expiry_threshold)
+        
+        auth_records = GoogleAuth.query.filter(
+            GoogleAuth.is_active == True,
+            GoogleAuth.auto_refresh_enabled == True,
+            GoogleAuth.token_expires_at <= expiring_soon
+        ).all()
+        
+        for auth in auth_records:
+            self.refresh_token_if_needed(auth)
+    
+    def refresh_token_if_needed(self, auth: GoogleAuth):
+        """Refresh individual auth token"""
+        try:
+            # Use Google OAuth2 library to refresh
+            credentials = google.oauth2.credentials.Credentials(
+                token=auth.access_token,
+                refresh_token=auth.refresh_token,
+                # ... other credential fields
+            )
+            
+            request = google.auth.transport.requests.Request()
+            credentials.refresh(request)
+            
+            # Update database record
+            auth.access_token = credentials.token
+            auth.token_expires_at = credentials.expiry
+            auth.last_refresh_at = datetime.utcnow()
+            auth.refresh_attempts = 0  # Reset on success
+            
+            db.session.commit()
+            
+        except Exception as e:
+            self.handle_refresh_failure(auth, str(e))
+```
+
+**Storage Monitoring Service:**
+```python
+class GoogleDriveStorageMonitor:
+    def __init__(self):
+        self.check_interval = 21600  # 6 hours
+        self.warning_thresholds = {
+            'low': 80, 'medium': 85, 'high': 90, 'critical': 95
+        }
+    
+    def check_storage_usage(self):
+        """Check storage for all active admin authentications"""
+        active_auths = GoogleAuth.query.filter(
+            GoogleAuth.is_active == True,
+            GoogleAuth.is_persistent == True
+        ).all()
+        
+        for auth in active_auths:
+            self.update_storage_info(auth)
+    
+    def update_storage_info(self, auth: GoogleAuth):
+        """Update storage information for specific auth"""
+        try:
+            # Build Google Drive service
+            service = build('drive', 'v3', credentials=self.get_credentials(auth))
+            
+            # Get storage quota information
+            about = service.about().get(fields='storageQuota').execute()
+            quota = about.get('storageQuota', {})
+            
+            # Update database
+            auth.drive_quota_total = int(quota.get('limit', 0))
+            auth.drive_quota_used = int(quota.get('usage', 0))
+            auth.last_quota_check = datetime.utcnow()
+            
+            # Calculate and update warning level
+            usage_percentage = self.calculate_usage_percentage(auth)
+            new_warning_level = self.determine_warning_level(usage_percentage)
+            
+            if new_warning_level != auth.quota_warning_level:
+                self.handle_warning_level_change(auth, new_warning_level)
+            
+            db.session.commit()
+            
+        except Exception as e:
+            logger.error(f"Failed to check storage for auth {auth.id}: {e}")
+```
+
+#### **Integration with Existing Systems**
+
+**File Upload Integration:**
+```python
+# Enhanced file upload service
+class FileUploadService:
+    def upload_file(self, file_data, user_id, google_drive_enabled=True):
+        # ... existing upload logic ...
+        
+        if google_drive_enabled:
+            # Check storage before upload
+            storage_status = self.check_storage_availability()
+            if storage_status['warning_level'] == 'critical':
+                return {
+                    'success': False,
+                    'error': 'Upload disabled due to low storage space',
+                    'storage_warning': storage_status
+                }
+            
+            # Proceed with Google Drive upload
+            google_result = self.upload_to_google_drive(file_data)
+            
+            # Update storage usage after upload
+            self.update_storage_usage_post_upload()
+```
+
+**Authentication Middleware Enhancement:**
+```python
+def require_persistent_google_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        # Check if user has valid persistent OAuth
+        auth = GoogleAuth.query.filter_by(
+            user_id=get_current_user_id(),
+            is_active=True,
+            is_persistent=True
+        ).first()
+        
+        if not auth:
+            return jsonify({
+                'error': 'Google authentication required',
+                'redirect_url': '/auth/google'
+            }), 401
+        
+        # Check if token is still valid
+        if auth.token_expires_at <= datetime.utcnow():
+            # Attempt refresh
+            if not refresh_token_synchronously(auth):
+                return jsonify({
+                    'error': 'Authentication expired',
+                    'redirect_url': '/auth/google'
+                }), 401
+        
+        # Update activity timestamp
+        auth.last_activity_at = datetime.utcnow()
+        db.session.commit()
+        
+        return f(*args, **kwargs)
+    return decorated_function
+```
+
+#### **Security and Error Handling**
+
+**Security Measures:**
+1. **Session Security**: Unique persistent_session_id prevents session hijacking
+2. **Token Encryption**: Store refresh tokens encrypted at rest
+3. **Activity Monitoring**: Track last_activity_at for security audits
+4. **Automatic Deactivation**: Deactivate after repeated refresh failures
+5. **Admin-Only Access**: Verify is_admin=True for all OAuth operations
+
+**Error Scenarios and Handling:**
+1. **Token Refresh Failure**: Exponential backoff, notification, eventual deactivation
+2. **Google API Errors**: Graceful degradation, local storage fallback
+3. **Storage Full**: Disable uploads, emergency cleanup recommendations
+4. **Network Issues**: Queue operations, retry with timeout
+5. **User Revocation**: Clean session termination, audit logging
+
+#### **Configuration Variables**
+```env
+# OAuth Persistence Configuration
+OAUTH_TOKEN_REFRESH_INTERVAL=900  # 15 minutes
+OAUTH_TOKEN_EXPIRY_THRESHOLD=300  # 5 minutes  
+OAUTH_MAX_REFRESH_FAILURES=5
+OAUTH_REFRESH_RETRY_BACKOFF=60    # 1 minute
+
+# Storage Monitoring Configuration
+STORAGE_CHECK_INTERVAL=21600      # 6 hours
+STORAGE_WARNING_LOW=80            # 80% threshold
+STORAGE_WARNING_MEDIUM=85         # 85% threshold  
+STORAGE_WARNING_HIGH=90           # 90% threshold
+STORAGE_WARNING_CRITICAL=95       # 95% threshold
+
+# Email Notifications
+STORAGE_WARNING_EMAIL_ENABLED=true
+STORAGE_WARNING_EMAIL_FROM=admin@resumemodifier.com
+STORAGE_WARNING_EMAIL_TO=admin@resumemodifier.com
+
+# Session Management
+PERSISTENT_SESSION_ENABLED=true
+SESSION_ACTIVITY_TIMEOUT=2592000  # 30 days
+SESSION_CLEANUP_INTERVAL=86400    # 24 hours
+```
+
+#### **Database Migration Requirements**
+```sql
+-- Add OAuth persistence fields to google_auth_tokens table
+ALTER TABLE google_auth_tokens
+ADD COLUMN is_persistent BOOLEAN DEFAULT TRUE NOT NULL,
+ADD COLUMN auto_refresh_enabled BOOLEAN DEFAULT TRUE NOT NULL,
+ADD COLUMN last_refresh_at DATETIME NULL,
+ADD COLUMN refresh_attempts INT DEFAULT 0 NOT NULL,
+ADD COLUMN max_refresh_failures INT DEFAULT 5 NOT NULL,
+
+-- Add storage monitoring fields
+ADD COLUMN drive_quota_total BIGINT NULL,
+ADD COLUMN drive_quota_used BIGINT NULL,
+ADD COLUMN last_quota_check DATETIME NULL,
+ADD COLUMN quota_warning_level VARCHAR(20) NULL,
+ADD COLUMN quota_warnings_sent JSON NULL,
+
+-- Add session management fields
+ADD COLUMN persistent_session_id VARCHAR(128) NULL UNIQUE,
+ADD COLUMN last_activity_at DATETIME NULL,
+ADD COLUMN is_active BOOLEAN DEFAULT TRUE NOT NULL,
+ADD COLUMN deactivated_reason VARCHAR(100) NULL,
+ADD COLUMN deactivated_at DATETIME NULL;
+
+-- Add constraints and indexes
+ALTER TABLE google_auth_tokens
+ADD CONSTRAINT check_positive_refresh_attempts CHECK (refresh_attempts >= 0),
+ADD CONSTRAINT check_positive_max_failures CHECK (max_refresh_failures > 0),
+ADD CONSTRAINT check_valid_warning_level CHECK (quota_warning_level IN ('none', 'low', 'medium', 'high', 'critical'));
+
+CREATE INDEX idx_google_auth_session ON google_auth_tokens(persistent_session_id);
+CREATE INDEX idx_google_auth_active ON google_auth_tokens(is_active, user_id);
+CREATE INDEX idx_google_auth_expires ON google_auth_tokens(token_expires_at);
+CREATE INDEX idx_google_auth_quota_check ON google_auth_tokens(last_quota_check);
+```
+
+#### **Service Components**
+1. **OAuthPersistenceService** - Manage persistent authentication sessions
+2. **TokenRefreshService** - Background token refresh automation  
+3. **StorageMonitoringService** - Google Drive quota monitoring and warnings
+4. **SessionManagementService** - Persistent session lifecycle management
+5. **NotificationService** - Storage warning notifications and alerts
+
+#### **Testing Strategy**
+1. **Unit Tests**: Token refresh logic, storage calculation, warning thresholds
+2. **Integration Tests**: End-to-end OAuth flow with persistence
+3. **Load Tests**: Multiple concurrent token refreshes
+4. **Storage Tests**: Various quota scenarios and warning triggers
+5. **Security Tests**: Session hijacking prevention, token encryption
+
+---
+
 ## 4. Non-Functional Requirements
 
 | Category          | Requirement                                                |
@@ -1117,6 +1651,10 @@ MAIL_SETTINGS = {
 | ✅ Resume Upload API            | `/resume/upload` functional                  | RZ          | Pending |
 | ✅ Resume Scoring API           | `/resume/score` with file_id support         | RZ          | Pending |
 | ✅ Google OAuth Integration     | Google Docs API authentication working       | RZ          | Pending |
+| ✅ OAuth Persistence System     | Persistent authentication with auto-refresh  | RZ          | Pending |
+| ✅ Storage Monitoring Service   | Google Drive quota monitoring and warnings   | RZ          | Pending |
+| ✅ Background Token Refresh     | Automatic OAuth token refresh service        | RZ          | Pending |
+| ✅ Storage Analytics API        | Storage usage analytics and recommendations  | RZ          | Pending |
 | ✅ Resume Template System       | Template management and selection API        | RZ          | Pending |
 | ✅ Resume Generation Engine     | Content generation with job matching AI      | RZ          | Pending |
 | ✅ Google Docs Export API       | Document creation from file_id or text       | RZ          | Pending |
@@ -1159,8 +1697,16 @@ MAIL_SETTINGS = {
    - Update `/resume/export/gdocs` to support file_id parameter
 9. **Set up Google Cloud project and enable Google Docs/Drive APIs.**
 10. **Implement OAuth 2.0 authentication flow for Google services.**
-11. **Create resume template management system.**
-12. **Integrate AI model for resume scoring and content optimization.**
+11. **Implement OAuth persistence system:**
+    - Enhance `GoogleAuth` model with persistence and monitoring fields
+    - Create `OAuthPersistenceService` for session management
+    - Implement `TokenRefreshService` for automatic token refresh
+    - Create `StorageMonitoringService` for Google Drive quota monitoring
+    - Implement background services for automated token refresh and storage checks
+    - Create admin endpoints for OAuth status, revocation, and storage analytics
+    - Add storage warning notification system with email alerts
+12. **Create resume template management system.**
+13. **Integrate AI model for resume scoring and content optimization.**
 13. **Develop Google Docs export functionality with professional formatting.**
 14. **Create comprehensive test suite for all authentication flows (registration, login, password recovery).**
 15. **Create comprehensive test suite for file management (upload, download, delete flows).**
