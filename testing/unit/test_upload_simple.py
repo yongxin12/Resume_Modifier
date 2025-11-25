@@ -70,5 +70,8 @@ def test_upload_pdf_success(mock_process, mock_storage, mock_validate, client, a
     assert data['success'] is True
     assert 'file' in data
     assert data['file']['original_filename'] == 'test.pdf'
-    assert data['file']['stored_filename'] == 'secure_test.pdf'
+    # Check that stored_filename uses the user_id_timestamp_filename pattern
+    stored_filename = data['file']['stored_filename']
+    import re
+    assert re.match(r'user_\d+_\d+_secure_test\.pdf', stored_filename), f"Expected user_{{id}}_{{timestamp}}_secure_test.pdf pattern, got: {stored_filename}"
     assert data['file']['extracted_text'] == 'Sample text'

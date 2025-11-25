@@ -160,11 +160,15 @@ class TestResumeFileModel:
             result = resume_file.to_dict()
             
             expected_keys = {
+                # Core fields from the model
                 'id', 'user_id', 'original_filename', 'stored_filename', 'file_size', 'file_size_formatted',
                 'mime_type', 'storage_type', 'file_path', 's3_bucket', 'file_hash', 'is_processed',
-                'extracted_text', 'processing_status', 'processing_error', 'page_count', 'paragraph_count',
-                'language', 'keywords', 'processing_time', 'processing_metadata', 'tags', 'is_active',
-                'created_at', 'updated_at', 'google_drive', 'duplicate_info'
+                'extracted_text', 'processing_status', 'processing_error', 'tags', 'is_active',
+                'created_at', 'updated_at',
+                # Category fields (included by default)
+                'category', 'category_updated_at', 'category_updated_by',
+                # Google Drive and duplicate info (included by default)
+                'google_drive', 'duplicate_info'
             }
             
             assert set(result.keys()) == expected_keys

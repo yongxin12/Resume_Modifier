@@ -83,7 +83,10 @@ class TestFileUploadAPI:
                 assert data['message'] == 'File uploaded successfully'
                 assert 'file' in data
                 assert data['file']['original_filename'] == 'test_resume.pdf'
-                assert data['file']['stored_filename'] == 'secure_test_resume.pdf'
+                # Check that stored_filename uses the user_id_timestamp_filename pattern
+                stored_filename = data['file']['stored_filename']
+                assert stored_filename.startswith('user_1_')
+                assert 'secure_test_resume.pdf' in stored_filename
                 assert data['file']['file_size'] == len(self.valid_pdf_content)
                 assert data['file']['mime_type'] == 'application/pdf'
                 assert 'file_id' in data['file']
@@ -428,7 +431,10 @@ class TestFileUploadAPI:
                 file_data = data['file']
                 assert file_data['user_id'] == 1  # sample_user id from conftest
                 assert file_data['original_filename'] == 'test_resume.pdf'
-                assert file_data['stored_filename'] == 'secure_test.pdf'
+                # Check that stored_filename uses the user_id_timestamp_filename pattern
+                stored_filename = file_data['stored_filename']
+                assert stored_filename.startswith('user_1_')
+                assert 'secure_test.pdf' in stored_filename
                 assert file_data['file_size'] == 1000
                 assert file_data['mime_type'] == 'application/pdf'
                 assert file_data['storage_type'] == 'local'
