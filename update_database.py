@@ -5,7 +5,15 @@ Update database with admin field for Google Drive restriction
 
 import sys
 import os
-sys.path.insert(0, '/app/core')
+
+# Add paths for Railway environment
+current_dir = os.path.dirname(os.path.abspath(__file__))
+core_dir = os.path.join(current_dir, 'core')
+sys.path.insert(0, core_dir)
+sys.path.insert(0, current_dir)
+
+# Set DATABASE_URL for Railway
+os.environ.setdefault('DATABASE_URL', "postgresql://postgres:IEAChRNbxjHiLfxsFfoodmTWgxFDxSmV@shinkansen.proxy.rlwy.net:52352/railway")
 
 from app import create_app
 from app.extensions import db

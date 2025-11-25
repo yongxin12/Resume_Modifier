@@ -54,6 +54,12 @@ def get_database_url():
     print("📡 Fetching Railway database credentials...")
     print()
     
+    # First check if DATABASE_URL is already in environment
+    database_url = os.environ.get('DATABASE_URL')
+    if database_url:
+        print(f"✅ Using DATABASE_URL from environment: {database_url[:30]}...")
+        return database_url
+    
     # Get variables from Postgres service
     output = run_command("railway variables --service Postgres 2>&1")
     
