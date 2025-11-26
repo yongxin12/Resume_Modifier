@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """
-Railway Database Migration Helper
-Simplifies running Flask database migrations on Railway's PostgreSQL
+Railway Database Migration Helper (LOCAL DEVELOPMENT TOOL)
+
+This script is for LOCAL development use only - it requires Railway CLI.
+For Railway deployment, use: scripts/deployment/railway_deploy_migrate.py
+
+Usage (from your local machine):
+    ./scripts/maintenance/railway_migrate.py upgrade   # Apply migrations
+    ./scripts/maintenance/railway_migrate.py current   # Show current version
+    ./scripts/maintenance/railway_migrate.py history   # Show history
+
+Prerequisites:
+    - Railway CLI: npm i -g @railway/cli
+    - Logged in: railway login
 """
 
 import subprocess
