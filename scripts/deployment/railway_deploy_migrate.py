@@ -17,6 +17,37 @@ sys.path.insert(0, core_dir)
 # Change to core directory for Flask-Migrate to find migrations folder
 os.chdir(core_dir)
 
+def check_tables_exist(db):
+    """Check if main application tables already exist in database."""
+    from sqlalchemy import text, inspect
+    
+    try:
+        inspector = inspect(db.engine)
+        existing_tables = inspector.get_table_names()
+        
+        # Core tables that indicate database is already set up
+        core_tables = ['users', 'resume_files', 'resume_templates']
+        found_tables = [t for t in core_tables if t in existing_tables]
+        
+        print(f"📋 Existing tables in database: {existing_tables}")
+        print(f"📋 Core tables found: {found_tables}")
+        
+        return len(found_tables) >= 2  # At least 2 core tables exist
+    except Exception as e:
+        print(f"⚠️  Could not check existing tables: {e}")
+        return False
+
+def check_alembic_version_exists(db):
+    """Check if alembic_version table has any entries."""
+    from sqlalchemy import text
+    
+    try:
+        result = db.session.execute(text("SELECT version_num FROM alembic_version"))
+        row = result.fetchone()
+        return row is not None
+    except Exception:
+        return False
+
 def check_and_fix_alembic_version(app, db):
     """
     Check if alembic_version contains a revision that doesn't exist.
@@ -31,8 +62,14 @@ def check_and_fix_alembic_version(app, db):
             row = result.fetchone()
             
             if not row:
-                print("📋 No alembic_version found - fresh database")
-                return True
+                # No alembic_version - check if tables already exist
+                tables_exist = check_tables_exist(db)
+                if tables_exist:
+                    print("📋 No alembic_version but tables exist - need to stamp to head")
+                    return "stamp_needed"
+                else:
+                    print("📋 No alembic_version found - fresh database")
+                    return "fresh"
             
             current_version = row[0]
             print(f"📋 Current database revision: {current_version}")
@@ -57,19 +94,19 @@ def check_and_fix_alembic_version(app, db):
             
             if current_version not in valid_revisions:
                 print(f"⚠️  Revision '{current_version}' not found in migration files!")
-                print("🔧 Stamping database to latest head to recover...")
+                print("🔧 Will stamp database to latest head...")
                 
                 # Delete the stale version
                 db.session.execute(text("DELETE FROM alembic_version"))
                 db.session.commit()
                 print("✅ Cleared stale alembic_version")
-                return True
+                return "stamp_needed"
             
-            return True
+            return "ok"
             
     except Exception as e:
         print(f"⚠️  Could not check alembic_version: {e}")
-        return True  # Continue anyway
+        return "ok"  # Continue anyway
 
 def run_migrations():
     """Run Flask database migrations"""
@@ -107,7 +144,7 @@ def run_migrations():
         migrate = Migrate(app, db)
         
         # Check and fix alembic version if needed
-        check_and_fix_alembic_version(app, db)
+        db_state = check_and_fix_alembic_version(app, db)
         
         print("🔄 Running database migrations...")
         print("-" * 50)
@@ -118,6 +155,15 @@ def run_migrations():
             if os.path.exists(migrations_dir):
                 print(f"✅ Migrations directory found: {migrations_dir}")
                 
+                # If tables exist but no alembic_version, stamp to head
+                if db_state == "stamp_needed":
+                    print("🔧 Tables exist but alembic_version is empty/invalid")
+                    print("   Stamping to head (skipping migrations)...")
+                    stamp(revision='head')
+                    print("-" * 50)
+                    print("✅ Database stamped to head - schema already up to date")
+                    return True
+                
                 try:
                     # Try running upgrade
                     upgrade()
@@ -126,16 +172,13 @@ def run_migrations():
                 except Exception as migrate_error:
                     error_msg = str(migrate_error)
                     
-                    # Handle "Can't locate revision" errors
-                    if "Can't locate revision" in error_msg:
-                        print(f"⚠️  Migration revision mismatch detected: {error_msg}")
-                        print("🔧 Attempting recovery: stamp to head and ensure tables exist...")
+                    # Handle "already exists" or "Can't locate revision" errors
+                    if "already exists" in error_msg or "Can't locate revision" in error_msg:
+                        print(f"⚠️  Migration conflict detected: {error_msg[:100]}...")
+                        print("🔧 Attempting recovery: stamp to head...")
                         
                         # Stamp to head (marks DB as up-to-date without running migrations)
                         stamp(revision='head')
-                        
-                        # Ensure all tables exist
-                        db.create_all()
                         
                         print("✅ Recovery complete - database stamped to head")
                     else:
