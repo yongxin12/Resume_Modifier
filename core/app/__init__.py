@@ -59,22 +59,20 @@ def create_app(config=None):
         }
     }
     
+    # Configure Flask sessions for Docker environment (will be done after extensions are initialized)
+    
     # Initialize extensions
     CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
     swagger = Swagger(app)
     db.init_app(app)
     
     # Import models to ensure they're known to Flask-Migrate
-    # Models are imported automatically by importing from app.models.db
+    # Models are imported automatically by importing from app.models.temp
     # This ensures they are registered with Flask-SQLAlchemy
     with app.app_context():
-        # Import models and explicitly register them with Flask-SQLAlchemy
+        # Import models to register them with Flask-SQLAlchemy
         from app.models.temp import User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite, PasswordResetToken
-        # Make sure the models are registered with db.metadata
-        for model in [User, Resume, JobDescription, ResumeFile, ResumeTemplate, GoogleAuth, GeneratedDocument, UserSite, PasswordResetToken]:
-            if hasattr(model, '__table__'):
-                if model.__table__.name not in db.metadata.tables:
-                    db.metadata.tables[model.__table__.name] = model.__table__
+        # Models are automatically registered when imported, no need to manually add to metadata
     
     # Initialize Flask-Migrate after models are imported
     migrate.init_app(app, db)
@@ -85,6 +83,27 @@ def create_app(config=None):
     # Initialize email service
     from app.services.email_service import email_service
     email_service.init_app(app)
+    
+    # Configure Flask sessions for Docker environment (after all extensions are initialized)
+    try:
+        from app.services.flask_session_config import configure_flask_sessions_for_docker, setup_oauth_session_support, validate_session_configuration
+        configure_flask_sessions_for_docker(app)
+        setup_oauth_session_support(app)
+        
+        # Validate session configuration
+        session_validation = validate_session_configuration(app)
+        if not session_validation.get('OVERALL_VALID', False):
+            print("⚠️  Session configuration validation failed - OAuth may not work properly")
+        
+        # Initialize OAuth temporary states table
+        from app.services.google_admin_auth_fixed import create_oauth_temp_states_table
+        with app.app_context():
+            create_oauth_temp_states_table()
+        
+        print("✅ OAuth session configuration completed successfully")
+    except Exception as e:
+        print(f"⚠️  Warning: OAuth session configuration failed: {e}")
+        print("   OAuth functionality may not work properly")
     
     # Register blueprints
     from app.server import api

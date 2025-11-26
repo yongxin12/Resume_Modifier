@@ -23,6 +23,13 @@ from app.utils.file_validator import FileValidator
 from app.services.file_storage_service import FileStorageService
 from app.services.file_processing_service import FileProcessingService
 from app.services.thumbnail_service import ThumbnailService
+
+# Enhanced OAuth and Session Management
+from app.services.google_admin_auth_fixed import GoogleAdminAuthServiceFixed, create_oauth_temp_states_table, cleanup_expired_oauth_states
+from app.services.flask_session_config import configure_flask_sessions_for_docker, setup_oauth_session_support, validate_session_configuration
+import secrets
+from datetime import datetime, timedelta
+
 from googleapiclient.errors import HttpError
 from datetime import datetime
 import logging
@@ -6793,8 +6800,8 @@ def initiate_admin_google_auth():
                 'error_code': 'ADMIN_REQUIRED'
             }), 403
         
-        from app.services.google_admin_auth import GoogleAdminAuthService
-        auth_service = GoogleAdminAuthService()
+        from app.services.google_admin_auth_fixed import GoogleAdminAuthServiceFixed
+        auth_service = GoogleAdminAuthServiceFixed()
         authorization_url = auth_service.initiate_admin_oauth_flow(current_user_id)
         
         return jsonify({
@@ -6936,8 +6943,8 @@ def google_admin_callback():
                 'error_code': 'MISSING_STATE'
             }), 400
         
-        from app.services.google_admin_auth import GoogleAdminAuthService
-        auth_service = GoogleAdminAuthService()
+        from app.services.google_admin_auth_fixed import GoogleAdminAuthServiceFixed
+        auth_service = GoogleAdminAuthServiceFixed()
         credentials = auth_service.handle_oauth_callback(authorization_code, state)
         
         # Get additional info about the authentication
@@ -6967,7 +6974,7 @@ def google_admin_callback():
         })
         
     except ValueError as ve:
-        logger.error(f"Google admin callback failed: {str(ve)}")
+        logging.getLogger(__name__).error(f"Google admin callback failed: {str(ve)}")
         return jsonify({
             'success': False,
             'message': str(ve),
@@ -6975,7 +6982,7 @@ def google_admin_callback():
         }), 400
         
     except Exception as e:
-        logger.error(f"Google admin callback failed: {str(e)}")
+        logging.getLogger(__name__).error(f"Google admin callback failed: {str(e)}")
         return jsonify({
             'success': False,
             'message': f'Authentication failed: {str(e)}',
@@ -7089,8 +7096,8 @@ def google_admin_auth_status():
                 'error_code': 'ADMIN_REQUIRED'
             }), 403
         
-        from app.services.google_admin_auth import GoogleAdminAuthService
-        auth_service = GoogleAdminAuthService()
+        from app.services.google_admin_auth_fixed import GoogleAdminAuthServiceFixed
+        auth_service = GoogleAdminAuthServiceFixed()
         
         # Get comprehensive auth status
         auth_status = auth_service.get_auth_status(current_user_id)
@@ -7216,8 +7223,8 @@ def revoke_admin_google_auth():
                 'error_code': 'REVOCATION_NOT_CONFIRMED'
             }), 400
         
-        from app.services.google_admin_auth import GoogleAdminAuthService
-        auth_service = GoogleAdminAuthService()
+        from app.services.google_admin_auth_fixed import GoogleAdminAuthServiceFixed
+        auth_service = GoogleAdminAuthServiceFixed()
         
         # Get current session info before revocation
         auth_status = auth_service.get_auth_status(current_user_id)

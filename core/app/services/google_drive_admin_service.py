@@ -21,7 +21,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 from flask import current_app
-from app.services.google_admin_auth import GoogleAdminAuthService
+from app.services.google_admin_auth_fixed import GoogleAdminAuthServiceFixed
 from app.models.temp import User
 import logging
 
@@ -37,7 +37,7 @@ class GoogleDriveAdminService:
     
     def __init__(self):
         """Initialize the Google Drive Admin Service."""
-        self.auth_service = GoogleAdminAuthService()
+        self.auth_service = GoogleAdminAuthServiceFixed()
         self.drive_service = None
         self.docs_service = None
         
@@ -46,12 +46,12 @@ class GoogleDriveAdminService:
         self.enable_sharing = current_app.config.get('GOOGLE_DRIVE_ENABLE_SHARING', True)
         self.default_permissions = current_app.config.get('GOOGLE_DRIVE_DEFAULT_PERMISSIONS', 'writer')
     
-    def _get_drive_service(self, user_id: int = None):
+    def _get_drive_service(self, admin_user_id: int = None):
         """
         Get authenticated Google Drive service using admin credentials.
         
         Args:
-            user_id: Specific admin user ID (optional)
+            admin_user_id: Specific admin user ID (optional, will find admin if not provided)
             
         Returns:
             googleapiclient.discovery.Resource: Authenticated Drive service
@@ -62,19 +62,35 @@ class GoogleDriveAdminService:
         if self.drive_service:
             return self.drive_service
         
-        credentials = self.auth_service.get_admin_credentials(user_id)
+        # Find authenticated admin user if not provided
+        if admin_user_id is None:
+            admin_users = User.query.filter_by(is_admin=True).all()
+            if not admin_users:
+                raise ValueError("No admin user found")
+            
+            # Find first authenticated admin user
+            for admin_user in admin_users:
+                auth_status = self.auth_service.get_auth_status(admin_user.id) 
+                if auth_status.get('authenticated'):
+                    admin_user_id = admin_user.id
+                    break
+            
+            if admin_user_id is None:
+                raise ValueError("No authenticated admin user found. Please authenticate at /auth/google/admin")
+        
+        credentials = self.auth_service.get_admin_credentials(admin_user_id)
         if not credentials:
             raise ValueError("Admin Google authentication required. Please authenticate at /auth/google/admin")
         
         self.drive_service = build('drive', 'v3', credentials=credentials)
         return self.drive_service
     
-    def _get_docs_service(self, user_id: int = None):
+    def _get_docs_service(self, admin_user_id: int = None):
         """
         Get authenticated Google Docs service using admin credentials.
         
         Args:
-            user_id: Specific admin user ID (optional)
+            admin_user_id: Specific admin user ID (optional, will find admin if not provided)
             
         Returns:
             googleapiclient.discovery.Resource: Authenticated Docs service
@@ -85,7 +101,23 @@ class GoogleDriveAdminService:
         if self.docs_service:
             return self.docs_service
         
-        credentials = self.auth_service.get_admin_credentials(user_id)
+        # Find authenticated admin user if not provided
+        if admin_user_id is None:
+            admin_users = User.query.filter_by(is_admin=True).all()
+            if not admin_users:
+                raise ValueError("No admin user found")
+            
+            # Find first authenticated admin user
+            for admin_user in admin_users:
+                auth_status = self.auth_service.get_auth_status(admin_user.id) 
+                if auth_status.get('authenticated'):
+                    admin_user_id = admin_user.id
+                    break
+            
+            if admin_user_id is None:
+                raise ValueError("No authenticated admin user found. Please authenticate at /auth/google/admin")
+        
+        credentials = self.auth_service.get_admin_credentials(admin_user_id)
         if not credentials:
             raise ValueError("Admin Google authentication required. Please authenticate at /auth/google/admin")
         
@@ -523,20 +555,32 @@ class GoogleDriveAdminService:
             dict: Authentication status information
         """
         try:
-            # Try to get credentials
-            credentials = self.auth_service.get_admin_credentials()
-            
-            if credentials and not credentials.expired:
-                return {
-                    'authenticated': True,
-                    'message': 'Admin Google Drive authentication is active'
-                }
-            else:
+            # Find all admin users and check if any are authenticated
+            admin_users = User.query.filter_by(is_admin=True).all()
+            if not admin_users:
                 return {
                     'authenticated': False,
-                    'message': 'Admin Google Drive authentication required',
+                    'message': 'No admin user found',
                     'auth_url': '/auth/google/admin'
                 }
+            
+            # Check auth status for all admin users
+            for admin_user in admin_users:
+                auth_status = self.auth_service.get_auth_status(admin_user.id)
+                
+                if auth_status.get('authenticated'):
+                    return {
+                        'authenticated': True,
+                        'message': 'Admin Google Drive authentication is active',
+                        'admin_user_id': admin_user.id
+                    }
+            
+            # If no admin user is authenticated
+            return {
+                'authenticated': False,
+                'message': 'Admin Google Drive authentication required',
+                'auth_url': '/auth/google/admin'
+            }
                 
         except Exception as e:
             logger.error(f"Failed to check admin auth status: {str(e)}")
