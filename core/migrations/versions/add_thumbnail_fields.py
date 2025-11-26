@@ -1,7 +1,7 @@
 """Add thumbnail fields to resume_files table
 
 Revision ID: add_thumbnail_fields
-Revises: previous_migration
+Revises: 2e4e6feef93f
 Create Date: 2025-11-22 12:00:00.000000
 
 """
@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = 'add_thumbnail_fields'
-down_revision = None  # Replace with actual previous revision
+down_revision = '2e4e6feef93f'  # Fixed: now correctly depends on previous migration
 branch_labels = None
 depends_on = None
 
