@@ -746,72 +746,75 @@ def upload_file():
         google_doc_id = None
         google_drive_info = None
         
-        # Handle Google Drive upload if requested
+        # Get mime type from uploaded file
+        mime_type = uploaded_file.content_type or 'application/octet-stream'
+        
+        # Handle Google Drive upload if requested (using Admin OAuth)
         google_drive_warnings = []
         if upload_to_google_drive:
             try:
-                google_drive_service = GoogleDriveService()
+                from app.services.google_drive_admin_service import GoogleDriveAdminService
+                google_drive_service = GoogleDriveAdminService()
                 
-                # Upload to Google Drive
-                uploaded_file.seek(0)  # Reset file pointer
-                file_content = uploaded_file.read()
-                drive_result = google_drive_service.upload_file_to_drive(
-                    file_content=file_content,
-                    filename=duplicate_result['display_filename'],
-                    mime_type=mime_type,
-                    user_id=current_user.id
-                )
-                drive_file_id = drive_result.get('file_id') if drive_result else None
+                # Check admin authentication status first
+                auth_status = google_drive_service.check_admin_auth_status()
                 
-                if drive_file_id:
-                    google_drive_file_id = drive_file_id
-                    
-                    # Convert to Google Doc if requested and file is PDF
-                    if convert_to_doc and uploaded_file.content_type == 'application/pdf':
-                        try:
-                            doc_id = google_drive_service.convert_to_google_doc(drive_file_id)
-                            if doc_id:
-                                google_doc_id = doc_id
-                        except Exception as conv_e:
-                            current_app.logger.warning(f"Google Doc conversion failed: {str(conv_e)}")
-                            google_drive_warnings.append("File uploaded to Google Drive but couldn't be converted to Google Doc")
-                    
-                    # Share with user if requested and email is available
-                    if share_with_user and current_user_email:
-                        try:
-                            google_drive_service.share_file_with_user(
-                                google_drive_file_id, 
-                                current_user_email, 
-                                'writer'
-                            )
-                            if google_doc_id:
-                                google_drive_service.share_file_with_user(
-                                    google_doc_id, 
-                                    current_user_email, 
-                                    'writer'
-                                )
-                        except Exception as share_e:
-                            current_app.logger.warning(f"Google Drive sharing failed: {str(share_e)}")
-                            google_drive_warnings.append("File uploaded to Google Drive but couldn't be shared automatically")
-                    
-                    # Prepare Google Drive info for response
-                    google_drive_info = {
-                        'file_id': google_drive_file_id,
-                        'drive_link': f"https://drive.google.com/file/d/{google_drive_file_id}/view",
-                        'is_shared': share_with_user and bool(current_user_email) and not any("shar" in w.lower() for w in google_drive_warnings)
-                    }
-                    
-                    if google_doc_id:
-                        google_drive_info.update({
-                            'doc_id': google_doc_id,
-                            'doc_link': f"https://docs.google.com/document/d/{google_doc_id}/edit"
-                        })
+                if not auth_status.get('authenticated'):
+                    google_drive_warnings.append(
+                        f"Google Drive admin authentication required. {auth_status.get('message', 'Please authenticate at /auth/google/admin')}"
+                    )
                 else:
-                    google_drive_warnings.append("Google Drive upload failed - file saved locally only")
+                    # Upload to admin's Google Drive
+                    uploaded_file.seek(0)  # Reset file pointer
+                    file_content = uploaded_file.read()
+                    
+                    # Get user information for sharing
+                    user = User.query.get(current_user_id)
+                    user_email = current_user_email or (user.email if user else None)
+                    
+                    drive_result = google_drive_service.upload_file_to_admin_drive(
+                        file_content=file_content,
+                        filename=duplicate_result['display_filename'],
+                        mime_type=mime_type,
+                        user_id=current_user_id,
+                        user_email=user_email,
+                        convert_to_doc=convert_to_doc,
+                        share_with_user=share_with_user
+                    )
+                    
+                    if drive_result.get('success'):
+                        google_drive_file_id = drive_result.get('file_id')
+                        google_doc_id = drive_result.get('doc_id')
+                        
+                        # Prepare Google Drive info for response
+                        google_drive_info = {
+                            'file_id': google_drive_file_id,
+                            'drive_link': drive_result.get('drive_link'),
+                            'is_shared': drive_result.get('sharing_successful', False),
+                            'shared_with': drive_result.get('shared_with'),
+                            'permissions': drive_result.get('permissions', 'writer'),
+                            'folder_id': drive_result.get('folder_id')
+                        }
+                        
+                        if google_doc_id:
+                            google_drive_info.update({
+                                'doc_id': google_doc_id,
+                                'doc_link': drive_result.get('doc_link')
+                            })
+                        
+                        # Add any sharing warnings
+                        if drive_result.get('sharing_errors'):
+                            google_drive_warnings.append("File uploaded to Google Drive but some sharing operations failed")
+                        
+                        # Add document conversion warnings if any
+                        if drive_result.get('doc_conversion_error'):
+                            google_drive_warnings.append(f"Document conversion failed: {drive_result.get('doc_conversion_error')}")
+                    else:
+                        google_drive_warnings.append(f"Google Drive upload failed: {drive_result.get('error', 'Unknown error')}")
                         
             except Exception as e:
                 error_handler = ErrorHandler()
-                current_app.logger.warning(f"Google Drive upload failed: {str(e)}")
+                current_app.logger.warning(f"Google Drive admin upload failed: {str(e)}")
                 google_drive_warnings.append("Google Drive temporarily unavailable - file saved locally")
         
         # Initialize processing variables
@@ -6719,6 +6722,539 @@ def update_storage_monitoring_config():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+
+# =============================================================================
+# GOOGLE OAUTH ADMIN AUTHENTICATION ROUTES (API-12, API-12a)
+# =============================================================================
+
+@api.route('/auth/google/admin', methods=['GET'])
+@token_required
+def initiate_admin_google_auth():
+    """
+    Initiate Google OAuth for admin user (API-12)
+    ---
+    tags:
+      - Google Authentication
+    security:
+      - Bearer: []
+    description: |
+      Initiate Google OAuth 2.0 authentication flow for admin users to enable
+      Google Drive integration. This endpoint is restricted to admin users only
+      and implements API-12 from the functional specifications.
+      
+      **Admin Access Only**: Only users with admin privileges can authenticate with Google.
+      
+      The OAuth flow provides persistent authentication per API-12a requirements,
+      eliminating the need for repeated authentication.
+    responses:
+      200:
+        description: OAuth flow initiated successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            authorization_url:
+              type: string
+              example: "https://accounts.google.com/o/oauth2/auth?..."
+              description: URL to visit for Google authentication
+            message:
+              type: string
+              example: "Please visit the authorization URL to complete Google authentication"
+            session_info:
+              type: object
+              properties:
+                initiated_at:
+                  type: string
+                  format: date-time
+                expires_in:
+                  type: integer
+                  example: 600
+                  description: Session expires in seconds
+      401:
+        description: Authentication required
+      403:
+        description: Admin privileges required for Google Drive authentication
+      500:
+        description: Failed to initiate Google authentication
+    """
+    try:
+        current_user_id = request.user['user_id']
+        
+        # Check if user is admin
+        user = User.query.get(current_user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Admin privileges required for Google Drive authentication',
+                'error_code': 'ADMIN_REQUIRED'
+            }), 403
+        
+        from app.services.google_admin_auth import GoogleAdminAuthService
+        auth_service = GoogleAdminAuthService()
+        authorization_url = auth_service.initiate_admin_oauth_flow(current_user_id)
+        
+        return jsonify({
+            'success': True,
+            'authorization_url': authorization_url,
+            'message': 'Please visit the authorization URL to complete Google authentication',
+            'instructions': [
+                '1. Click the authorization URL to open Google OAuth page',
+                '2. Sign in with your Google account',
+                '3. Grant permissions for Google Drive and Docs access',
+                '4. You will be redirected back to complete authentication'
+            ],
+            'session_info': {
+                'initiated_at': datetime.utcnow().isoformat(),
+                'expires_in': 600,  # 10 minutes
+                'user_id': current_user_id
+            }
+        })
+        
+    except ValueError as ve:
+        logger.error(f"Failed to initiate admin Google auth: {str(ve)}")
+        return jsonify({
+            'success': False,
+            'message': str(ve),
+            'error_code': 'OAUTH_INIT_FAILED'
+        }), 400
+        
+    except Exception as e:
+        logger.error(f"Failed to initiate admin Google auth: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to initiate Google authentication',
+            'error_code': 'INTERNAL_ERROR'
+        }), 500
+
+
+@api.route('/auth/google/admin/callback', methods=['GET'])
+def google_admin_callback():
+    """
+    Handle Google OAuth callback for admin (API-12)
+    ---
+    tags:
+      - Google Authentication
+    description: |
+      Handle the OAuth callback from Google after admin user completes authentication.
+      This endpoint processes the authorization code and stores persistent credentials
+      per API-12a requirements.
+      
+      **Internal Endpoint**: This endpoint is called automatically by Google's OAuth service.
+    parameters:
+      - name: code
+        in: query
+        type: string
+        required: true
+        description: Authorization code from Google OAuth
+      - name: state
+        in: query
+        type: string
+        required: true
+        description: State parameter for CSRF protection
+      - name: error
+        in: query
+        type: string
+        required: false
+        description: Error code if OAuth failed
+    responses:
+      200:
+        description: Authentication successful
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Google Drive authentication successful!"
+            oauth_info:
+              type: object
+              properties:
+                authenticated:
+                  type: boolean
+                  example: true
+                persistent_session_created:
+                  type: boolean
+                  example: true
+                scopes:
+                  type: array
+                  items:
+                    type: string
+                  example: ["https://www.googleapis.com/auth/drive"]
+                user_info:
+                  type: object
+                  properties:
+                    email:
+                      type: string
+                      example: "admin@company.com"
+                    name:
+                      type: string
+                      example: "Admin User"
+            next_steps:
+              type: array
+              items:
+                type: string
+              example: 
+                - "Authentication is now persistent and will auto-refresh"
+                - "File uploads will be stored in your Google Drive"
+                - "Users will receive shareable links with edit permissions"
+      400:
+        description: Invalid callback parameters or authentication failed
+      500:
+        description: Authentication processing failed
+    """
+    try:
+        # Check for OAuth errors
+        error_param = request.args.get('error')
+        if error_param:
+            logger.warning(f"OAuth error received: {error_param}")
+            return jsonify({
+                'success': False,
+                'message': f'Google authentication was cancelled or failed: {error_param}',
+                'error_code': 'OAUTH_CANCELLED'
+            }), 400
+        
+        authorization_code = request.args.get('code')
+        state = request.args.get('state')
+        
+        if not authorization_code:
+            return jsonify({
+                'success': False,
+                'message': 'Authorization code not provided by Google',
+                'error_code': 'MISSING_AUTH_CODE'
+            }), 400
+        
+        if not state:
+            return jsonify({
+                'success': False,
+                'message': 'State parameter missing - possible security issue',
+                'error_code': 'MISSING_STATE'
+            }), 400
+        
+        from app.services.google_admin_auth import GoogleAdminAuthService
+        auth_service = GoogleAdminAuthService()
+        credentials = auth_service.handle_oauth_callback(authorization_code, state)
+        
+        # Get additional info about the authentication
+        user_id = session.get('admin_user_id')  # This should be cleared by the callback handler
+        if user_id:
+            auth_status = auth_service.get_auth_status(user_id)
+        else:
+            auth_status = {'authenticated': True}
+        
+        return jsonify({
+            'success': True,
+            'message': 'Google Drive authentication successful! File uploads will now be stored in admin\'s Google Drive.',
+            'oauth_info': {
+                'authenticated': True,
+                'persistent_session_created': True,
+                'scopes': credentials.scopes if credentials else [],
+                'auto_refresh_enabled': True,
+                'oauth_status': auth_status
+            },
+            'next_steps': [
+                'Authentication is now persistent and will auto-refresh tokens',
+                'File uploads will be automatically stored in your Google Drive',
+                'Users will receive shareable Google Doc links with edit permissions',
+                'Storage usage will be monitored with warnings at capacity thresholds'
+            ],
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+    except ValueError as ve:
+        logger.error(f"Google admin callback failed: {str(ve)}")
+        return jsonify({
+            'success': False,
+            'message': str(ve),
+            'error_code': 'CALLBACK_VALIDATION_FAILED'
+        }), 400
+        
+    except Exception as e:
+        logger.error(f"Google admin callback failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'Authentication failed: {str(e)}',
+            'error_code': 'CALLBACK_PROCESSING_FAILED'
+        }), 500
+
+
+@api.route('/auth/google/admin/status', methods=['GET'])
+@token_required
+def google_admin_auth_status():
+    """
+    Check admin Google authentication status (API-12a)
+    ---
+    tags:
+      - Google Authentication
+    security:
+      - Bearer: []
+    description: |
+      Check the current Google authentication status for admin users, including
+      persistent session information and storage quota status. This endpoint
+      implements API-12a persistent authentication monitoring.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    responses:
+      200:
+        description: Authentication status retrieved successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            oauth_status:
+              type: object
+              properties:
+                authenticated:
+                  type: boolean
+                  example: true
+                is_persistent:
+                  type: boolean
+                  example: true
+                session_id:
+                  type: string
+                  example: "abc123def456ghi789"
+                token_expires_at:
+                  type: string
+                  format: date-time
+                last_refresh_at:
+                  type: string
+                  format: date-time
+                auto_refresh_enabled:
+                  type: boolean
+                  example: true
+                is_active:
+                  type: boolean
+                  example: true
+            storage_status:
+              type: object
+              properties:
+                quota_total:
+                  type: integer
+                  example: 17179869184
+                  description: Total storage quota in bytes
+                quota_used:
+                  type: integer
+                  example: 13743895347
+                  description: Used storage in bytes
+                usage_percentage:
+                  type: number
+                  example: 80.0
+                warning_level:
+                  type: string
+                  example: "low"
+                  enum: ["none", "low", "medium", "high", "critical"]
+                last_check:
+                  type: string
+                  format: date-time
+                formatted_quota:
+                  type: object
+                  properties:
+                    total:
+                      type: string
+                      example: "16.0 GB"
+                    used:
+                      type: string
+                      example: "12.8 GB"
+                    available:
+                      type: string
+                      example: "3.2 GB"
+            scopes:
+              type: array
+              items:
+                type: string
+              example: ["https://www.googleapis.com/auth/drive"]
+      401:
+        description: Authentication required
+      403:
+        description: Admin privileges required
+      500:
+        description: Failed to check authentication status
+    """
+    try:
+        current_user_id = request.user['user_id']
+        
+        # Check if user is admin
+        user = User.query.get(current_user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Admin privileges required',
+                'error_code': 'ADMIN_REQUIRED'
+            }), 403
+        
+        from app.services.google_admin_auth import GoogleAdminAuthService
+        auth_service = GoogleAdminAuthService()
+        
+        # Get comprehensive auth status
+        auth_status = auth_service.get_auth_status(current_user_id)
+        
+        # Get storage information if authenticated
+        storage_info = {}
+        if auth_status.get('authenticated'):
+            storage_info = auth_service.get_storage_info(current_user_id)
+        
+        # Get current credentials for scope information
+        credentials = auth_service.get_admin_credentials(current_user_id)
+        scopes = credentials.scopes if credentials else []
+        
+        return jsonify({
+            'success': True,
+            'oauth_status': auth_status,
+            'storage_status': storage_info,
+            'scopes': scopes,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to check Google auth status: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to check authentication status',
+            'error_code': 'STATUS_CHECK_FAILED'
+        }), 500
+
+
+@api.route('/auth/google/admin/revoke', methods=['POST'])
+@token_required
+def revoke_admin_google_auth():
+    """
+    Revoke admin Google authentication
+    ---
+    tags:
+      - Google Authentication
+    security:
+      - Bearer: []
+    description: |
+      Manually revoke Google OAuth authentication for the admin user.
+      This will deactivate the persistent session and require re-authentication
+      for future Google Drive operations.
+      
+      **Admin Access Only**: This endpoint requires admin privileges.
+    parameters:
+      - in: body
+        name: revocation_data
+        required: false
+        schema:
+          type: object
+          properties:
+            confirm_revocation:
+              type: boolean
+              example: true
+              description: Confirmation that revocation is intended
+            reason:
+              type: string
+              example: "Manual admin revocation"
+              description: Reason for revocation (optional)
+    responses:
+      200:
+        description: Authentication revoked successfully
+        schema:
+          type: object
+          properties:
+            success:
+              type: boolean
+              example: true
+            message:
+              type: string
+              example: "Google authentication has been revoked"
+            revocation_info:
+              type: object
+              properties:
+                revoked_at:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+                  example: "Manual admin revocation"
+                session_id:
+                  type: string
+                  example: "abc123def456ghi789"
+            next_steps:
+              type: array
+              items:
+                type: string
+              example:
+                - "Re-authenticate at /auth/google/admin to restore Google Drive integration"
+                - "File uploads will use local storage until re-authentication"
+      400:
+        description: Invalid revocation request
+      401:
+        description: Authentication required
+      403:
+        description: Admin privileges required
+      500:
+        description: Failed to revoke authentication
+    """
+    try:
+        current_user_id = request.user['user_id']
+        
+        # Check if user is admin
+        user = User.query.get(current_user_id)
+        if not user or not user.is_admin:
+            return jsonify({
+                'success': False,
+                'message': 'Admin privileges required',
+                'error_code': 'ADMIN_REQUIRED'
+            }), 403
+        
+        # Get request data
+        data = request.get_json() or {}
+        confirm_revocation = data.get('confirm_revocation', True)
+        reason = data.get('reason', 'Manual admin revocation')
+        
+        if not confirm_revocation:
+            return jsonify({
+                'success': False,
+                'message': 'Revocation not confirmed',
+                'error_code': 'REVOCATION_NOT_CONFIRMED'
+            }), 400
+        
+        from app.services.google_admin_auth import GoogleAdminAuthService
+        auth_service = GoogleAdminAuthService()
+        
+        # Get current session info before revocation
+        auth_status = auth_service.get_auth_status(current_user_id)
+        session_id = auth_status.get('oauth_status', {}).get('persistent_session_id')
+        
+        # Revoke authentication
+        revocation_successful = auth_service.revoke_admin_auth(current_user_id, reason)
+        
+        if revocation_successful:
+            return jsonify({
+                'success': True,
+                'message': 'Google authentication has been revoked successfully',
+                'revocation_info': {
+                    'revoked_at': datetime.utcnow().isoformat(),
+                    'reason': reason,
+                    'session_id': session_id,
+                    'user_id': current_user_id
+                },
+                'next_steps': [
+                    'Re-authenticate at /auth/google/admin to restore Google Drive integration',
+                    'File uploads will use local storage until re-authentication',
+                    'Previously uploaded files in Google Drive remain accessible'
+                ]
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Failed to revoke Google authentication',
+                'error_code': 'REVOCATION_FAILED'
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Failed to revoke admin Google auth: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': 'Failed to revoke authentication',
+            'error_code': 'REVOCATION_ERROR'
         }), 500
 
 

@@ -19,6 +19,21 @@ def create_app(config=None):
         app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql+pymysql://mysql:Mintmelon666!@localhost:3306/resume_app')
         # Set Flask secret key for sessions
         app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
+        
+        # Load Google Drive configuration (Service Account)
+        app.config['GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE'] = os.getenv('GOOGLE_DRIVE_SERVICE_ACCOUNT_FILE')
+        app.config['GOOGLE_DRIVE_SERVICE_ACCOUNT_INFO'] = os.getenv('GOOGLE_DRIVE_SERVICE_ACCOUNT_INFO')
+        app.config['GOOGLE_DRIVE_PARENT_FOLDER_ID'] = os.getenv('GOOGLE_DRIVE_PARENT_FOLDER_ID')
+        app.config['GOOGLE_DRIVE_SHARED_DRIVE_ID'] = os.getenv('GOOGLE_DRIVE_SHARED_DRIVE_ID')
+        app.config['GOOGLE_DRIVE_ENABLED'] = os.getenv('GOOGLE_DRIVE_ENABLED', 'true').lower() == 'true'
+        
+        # Load Google OAuth configuration (Admin Authentication)
+        app.config['GOOGLE_ADMIN_OAUTH_CLIENT_ID'] = os.getenv('GOOGLE_ADMIN_OAUTH_CLIENT_ID')
+        app.config['GOOGLE_ADMIN_OAUTH_CLIENT_SECRET'] = os.getenv('GOOGLE_ADMIN_OAUTH_CLIENT_SECRET')
+        app.config['GOOGLE_ADMIN_OAUTH_REDIRECT_URI'] = os.getenv('GOOGLE_ADMIN_OAUTH_REDIRECT_URI', 'http://localhost:5001/auth/google/admin/callback')
+        app.config['GOOGLE_ADMIN_DRIVE_FOLDER_NAME'] = os.getenv('GOOGLE_ADMIN_DRIVE_FOLDER_NAME', 'Resume_Modifier_Files')
+        app.config['GOOGLE_DRIVE_ENABLE_SHARING'] = os.getenv('GOOGLE_DRIVE_ENABLE_SHARING', 'true').lower() == 'true'
+        app.config['GOOGLE_DRIVE_DEFAULT_PERMISSIONS'] = os.getenv('GOOGLE_DRIVE_DEFAULT_PERMISSIONS', 'writer')
     else:
         print("Loading test configuration")
         # For testing, use SQLite by default

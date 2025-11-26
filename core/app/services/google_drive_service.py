@@ -31,7 +31,12 @@ class GoogleDriveService:
         """Get Google Drive service with credentials"""
         if self.drive_service:
             return self.drive_service
-        return build('drive', 'v3', credentials=credentials)
+        
+        if credentials:
+            return build('drive', 'v3', credentials=credentials)
+        
+        # If no credentials provided, try to initialize service account
+        return self.initialize_service_account()
         
     def create_shareable_link(self, document_id: str, credentials=None) -> Dict[str, Any]:
         """
@@ -422,7 +427,7 @@ class GoogleDriveService:
         credentials=None
     ) -> Dict[str, Any]:
         """
-        Upload a file to Google Drive.
+        Upload a file to Google Drive with fallback folder creation.
         
         Args:
             file_content: Binary content of the file
@@ -446,42 +451,112 @@ class GoogleDriveService:
                     'error': 'Google Drive service not available'
                 }
             
+            # Get drive configuration
+            shared_drive_id = current_app.config.get('GOOGLE_DRIVE_SHARED_DRIVE_ID')
+            configured_parent_folder = current_app.config.get('GOOGLE_DRIVE_PARENT_FOLDER_ID')
+            target_folder_id = parent_folder_id or configured_parent_folder
+            
             # Create file metadata
             file_metadata = {
-                'name': filename,
-                'parents': [parent_folder_id] if parent_folder_id else []
+                'name': filename
             }
             
-            # Create media upload object
-            media = MediaIoBaseUpload(
-                io.BytesIO(file_content),
-                mimetype=mime_type,
-                resumable=True
-            )
-            
-            # Upload the file
-            file = service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id, name, mimeType, size, webViewLink, webContentLink, createdTime'
-            ).execute()
-            
-            result = {
-                'success': True,
-                'file_id': file.get('id'),
-                'name': file.get('name'),
-                'mime_type': file.get('mimeType'),
-                'size': int(file.get('size', 0)),
-                'web_view_link': file.get('webViewLink'),
-                'web_content_link': file.get('webContentLink'),
-                'created_time': file.get('createdTime')
+            # Determine upload strategy
+            upload_params = {
+                'body': file_metadata,
+                'media_body': MediaIoBaseUpload(
+                    io.BytesIO(file_content),
+                    mimetype=mime_type,
+                    resumable=True
+                ),
+                'fields': 'id, name, mimeType, size, webViewLink, webContentLink, createdTime'
             }
             
-            logger.info(f"Successfully uploaded file '{filename}' to Google Drive: {result['file_id']}")
-            return result
+            # Strategy 1: Try shared drive if configured
+            if shared_drive_id:
+                upload_params['supportsAllDrives'] = True
+                upload_params['driveId'] = shared_drive_id
+                if target_folder_id:
+                    file_metadata['parents'] = [target_folder_id]
+                logger.info(f"Attempting upload to shared drive: {shared_drive_id}")
+                
+                try:
+                    file = service.files().create(**upload_params).execute()
+                    logger.info(f"Successfully uploaded to shared drive")
+                    return self._format_upload_result(file, "shared_drive", shared_drive_id)
+                except Exception as e:
+                    logger.warning(f"Shared drive upload failed: {str(e)}, trying fallback")
+            
+            # Strategy 2: Try configured parent folder with user subfolder
+            if target_folder_id:
+                # Create or get user-specific subfolder
+                user_folder_name = f"User_{user_id}_Files"
+                user_folder_id = self._get_or_create_user_folder(service, target_folder_id, user_folder_name)
+                
+                if user_folder_id:
+                    file_metadata['parents'] = [user_folder_id]
+                    upload_params['supportsAllDrives'] = True
+                    logger.info(f"Attempting upload to user folder: {user_folder_id}")
+                    
+                    try:
+                        file = service.files().create(**upload_params).execute()
+                        logger.info(f"Successfully uploaded to configured user folder")
+                        return self._format_upload_result(file, "configured_user_folder")
+                    except Exception as e:
+                        logger.warning(f"Configured user folder upload failed: {str(e)}, trying fallback")
+                
+                # Fallback to direct parent folder upload
+                file_metadata['parents'] = [target_folder_id]
+                upload_params['supportsAllDrives'] = True
+                logger.info(f"Attempting upload to parent folder: {target_folder_id}")
+                
+                try:
+                    file = service.files().create(**upload_params).execute()
+                    logger.info(f"Successfully uploaded to configured folder")
+                    return self._format_upload_result(file, "configured_folder")
+                except Exception as e:
+                    logger.warning(f"Configured folder upload failed: {str(e)}, trying fallback")
+            
+            # Strategy 3: Create service account accessible folder
+            logger.info("Creating service account accessible folder")
+            fallback_folder_id = self._create_service_account_folder(service, f"Resume Modifier User {user_id}")
+            
+            if fallback_folder_id:
+                file_metadata['parents'] = [fallback_folder_id]
+                upload_params['body'] = file_metadata
+                upload_params['supportsAllDrives'] = True
+                
+                try:
+                    file = service.files().create(**upload_params).execute()
+                    logger.info(f"Successfully uploaded to service account folder: {fallback_folder_id}")
+                    return self._format_upload_result(file, "service_account_folder")
+                except Exception as e:
+                    logger.warning(f"Service account folder upload failed: {str(e)}")
+            
+            # Strategy 4: Upload to root (last resort)
+            logger.info("Attempting upload to service account root drive")
+            file_metadata.pop('parents', None)  # Remove parents for root upload
+            upload_params['body'] = file_metadata
+            
+            file = service.files().create(**upload_params).execute()
+            
+            logger.info(f"Successfully uploaded file '{filename}' to Google Drive root")
+            return self._format_upload_result(file, "root_drive")
             
         except Exception as e:
-            logger.error(f"Failed to upload file to Google Drive: {str(e)}")
+            error_message = str(e)
+            
+            # Check if it's a storage quota error and suggest solution
+            if "Service Accounts do not have storage quota" in error_message:
+                logger.error("Google Drive upload failed: Service account storage quota exceeded.")
+                logger.error("Solution: Configure GOOGLE_DRIVE_SHARED_DRIVE_ID for shared drive support.")
+                return {
+                    'success': False,
+                    'error': 'Service account storage quota exceeded. Configure shared drive for uploads.',
+                    'suggestion': 'Set GOOGLE_DRIVE_SHARED_DRIVE_ID environment variable'
+                }
+            
+            logger.error(f"Failed to upload file to Google Drive: {error_message}")
             
             # In testing mode, check if this is a mock HttpError (used in error tests)
             # If it's a mock HttpError, respect the test's intention to simulate an error
@@ -692,3 +767,86 @@ class GoogleDriveService:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _format_upload_result(self, file_info: dict, strategy: str, shared_drive_name: str = None) -> dict:
+        """Format upload result with consistent structure."""
+        result = {
+            'success': True,
+            'file_id': file_info.get('id'),
+            'name': file_info.get('name'),
+            'web_view_link': file_info.get('webViewLink'),
+            'web_content_link': file_info.get('webContentLink'),
+            'parents': file_info.get('parents', []),
+            'strategy_used': strategy
+        }
+        
+        if shared_drive_name:
+            result['shared_drive'] = shared_drive_name
+            
+        return result
+    
+    def _get_or_create_user_folder(self, service, parent_folder_id: str, folder_name: str) -> Optional[str]:
+        """Get or create a user-specific folder within the parent folder."""
+        try:
+            # First, search for existing folder
+            query = f"name='{folder_name}' and '{parent_folder_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            
+            results = service.files().list(
+                q=query,
+                spaces='drive',
+                fields='files(id, name)',
+                supportsAllDrives=True
+            ).execute()
+            
+            folders = results.get('files', [])
+            
+            if folders:
+                folder_id = folders[0]['id']
+                logger.info(f"Found existing user folder '{folder_name}' with ID: {folder_id}")
+                return folder_id
+            
+            # Create new folder if not found
+            folder_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [parent_folder_id],
+                'description': f'User-specific folder for Resume Modifier uploads'
+            }
+            
+            folder = service.files().create(
+                body=folder_metadata,
+                fields='id, name, webViewLink',
+                supportsAllDrives=True
+            ).execute()
+            
+            folder_id = folder.get('id')
+            logger.info(f"Created user folder '{folder_name}' with ID: {folder_id}")
+            
+            return folder_id
+            
+        except Exception as e:
+            logger.warning(f"Failed to get or create user folder: {str(e)}")
+            return None
+
+    def _create_service_account_folder(self, service, folder_name: str = "Resume Modifier Service") -> str:
+        """Create a folder accessible to the service account."""
+        try:
+            folder_metadata = {
+                'name': folder_name,
+                'mimeType': 'application/vnd.google-apps.folder',
+                'description': 'Folder for Resume Modifier service account uploads'
+            }
+            
+            folder = service.files().create(
+                body=folder_metadata,
+                fields='id, name, webViewLink'
+            ).execute()
+            
+            folder_id = folder.get('id')
+            logger.info(f"Created service account folder '{folder_name}' with ID: {folder_id}")
+            
+            return folder_id
+            
+        except Exception as e:
+            logger.error(f"Failed to create service account folder: {str(e)}")
+            raise
