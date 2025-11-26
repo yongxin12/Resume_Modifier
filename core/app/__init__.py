@@ -1,7 +1,7 @@
 # Empty file is sufficient
 # This makes the app directory a Python package 
 
-from flask import Flask
+from flask import Flask, request
 from flask_cors import CORS
 from flasgger import Swagger
 from app.extensions import db, migrate, login_manager
@@ -61,38 +61,53 @@ def create_app(config=None):
     
     # Configure Flask sessions for Docker environment (will be done after extensions are initialized)
     
-    # CORS Configuration - Allow frontend origins including Lovable
-    cors_origins = os.getenv('CORS_ORIGINS', '*')
-    if cors_origins != '*':
-        # Parse comma-separated origins
-        allowed_origins = [origin.strip() for origin in cors_origins.split(',')]
-    else:
-        allowed_origins = '*'
+    # CORS Configuration - Allow ALL origins without restrictions
+    # Note: When supports_credentials=True, browsers don't allow wildcard origins
+    # Solution: Use supports_credentials=False for unrestricted access, OR
+    # use a dynamic origin handler that echoes back the requesting origin
     
-    # Always include Lovable frontend origins for development/production
-    lovable_origins = [
-        'https://bf2cf7ea-4663-40a3-94f2-8b02671da1f2.lovableproject.com',
-        'https://id-preview--bf2cf7ea-4663-40a3-94f2-8b02671da1f2.lovable.app',
-    ]
-    
-    if allowed_origins == '*':
-        # If wildcard, keep it as wildcard (allows all origins)
-        final_origins = '*'
-    else:
-        # Merge configured origins with Lovable origins
-        final_origins = list(set(allowed_origins + lovable_origins))
-    
-    # Initialize extensions
+    # Option 1: Fully open CORS (no credentials support - simplest solution)
+    # This allows ANY origin to access the API without restrictions
     CORS(app, resources={
         r"/*": {
-            "origins": final_origins,
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-            "allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept"],
-            "expose_headers": ["Content-Range", "X-Content-Range"],
-            "supports_credentials": True,
-            "max_age": 600
+            "origins": "*",
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+            "allow_headers": ["*"],  # Allow all headers
+            "expose_headers": ["Content-Range", "X-Content-Range", "Content-Length", "Content-Type"],
+            "supports_credentials": False,  # Must be False for wildcard origins
+            "max_age": 86400,  # Cache preflight for 24 hours
+            "send_wildcard": True
         }
     })
+    
+    # Add after_request handler to ensure CORS headers are always present
+    @app.after_request
+    def add_cors_headers(response):
+        """Ensure CORS headers are present on every response."""
+        # Get the origin from the request
+        origin = request.headers.get('Origin', '*')
+        
+        # Always set these headers for maximum compatibility
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Range, X-Content-Range, Content-Length'
+        response.headers['Access-Control-Max-Age'] = '86400'
+        
+        return response
+    
+    # Handle OPTIONS preflight requests explicitly
+    @app.before_request
+    def handle_preflight():
+        """Handle CORS preflight OPTIONS requests."""
+        if request.method == 'OPTIONS':
+            response = app.make_default_options_response()
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin'
+            response.headers['Access-Control-Max-Age'] = '86400'
+            return response
+
     swagger = Swagger(app)
     db.init_app(app)
     
