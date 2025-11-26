@@ -17,61 +17,65 @@ from app.utils.error_handler import (
 class TestErrorHandler:
     """Test cases for ErrorHandler"""
     
-    def test_create_error_response_basic(self):
+    def test_create_error_response_basic(self, app):
         """Test basic error response creation"""
-        handler = ErrorHandler()
-        response, status_code = handler.create_error_response(ErrorCode.FILE_NOT_PROVIDED)
-        
-        assert status_code == 400
-        response_data = response.get_json()
-        assert response_data['success'] is False
-        assert response_data['error_code'] == 'FILE_001'
-        assert 'Please select a file' in response_data['message']
-        assert 'timestamp' in response_data
+        with app.app_context():
+            handler = ErrorHandler()
+            response, status_code = handler.create_error_response(ErrorCode.FILE_NOT_PROVIDED)
+            
+            assert status_code == 400
+            response_data = response.get_json()
+            assert response_data['success'] is False
+            assert response_data['error_code'] == 'FILE_001'
+            assert 'Please select a file' in response_data['message']
+            assert 'timestamp' in response_data
     
-    def test_create_error_response_with_context(self):
+    def test_create_error_response_with_context(self, app):
         """Test error response with context formatting"""
-        handler = ErrorHandler()
-        context = {'max_size': 10}
-        response, status_code = handler.create_error_response(
-            ErrorCode.FILE_SIZE_EXCEEDED, 
-            context=context
-        )
-        
-        assert status_code == 400
-        response_data = response.get_json()
-        assert '10MB' in response_data['message']
-    
-    def test_create_error_response_custom_message(self):
-        """Test error response with custom message"""
-        handler = ErrorHandler()
-        custom_message = "Custom error message for user"
-        response, status_code = handler.create_error_response(
-            ErrorCode.FILE_NOT_PROVIDED,
-            custom_message=custom_message
-        )
-        
-        response_data = response.get_json()
-        assert response_data['message'] == custom_message
-    
-    def test_handle_exception(self):
-        """Test exception handling with logging"""
-        handler = ErrorHandler()
-        test_exception = ValueError("Test error")
-        
-        with patch.object(handler.logger, 'error') as mock_logger:
-            response, status_code = handler.handle_exception(
-                test_exception, 
-                ErrorCode.INVALID_REQUEST
+        with app.app_context():
+            handler = ErrorHandler()
+            context = {'max_size': 10}
+            response, status_code = handler.create_error_response(
+                ErrorCode.FILE_SIZE_EXCEEDED, 
+                context=context
             )
             
             assert status_code == 400
-            # Should be called twice: once for exception, once for error response
-            assert mock_logger.call_count == 2
+            response_data = response.get_json()
+            assert '10MB' in response_data['message']
+    
+    def test_create_error_response_custom_message(self, app):
+        """Test error response with custom message"""
+        with app.app_context():
+            handler = ErrorHandler()
+            custom_message = "Custom error message for user"
+            response, status_code = handler.create_error_response(
+                ErrorCode.FILE_NOT_PROVIDED,
+                custom_message=custom_message
+            )
             
             response_data = response.get_json()
-            assert response_data['success'] is False
-            assert 'ValueError' in str(mock_logger.call_args_list)
+            assert response_data['message'] == custom_message
+    
+    def test_handle_exception(self, app):
+        """Test exception handling with logging"""
+        with app.app_context():
+            handler = ErrorHandler()
+            test_exception = ValueError("Test error")
+            
+            with patch.object(handler.logger, 'error') as mock_logger:
+                response, status_code = handler.handle_exception(
+                    test_exception, 
+                    ErrorCode.INVALID_REQUEST
+                )
+                
+                assert status_code == 400
+                # Should be called twice: once for exception, once for error response
+                assert mock_logger.call_count == 2
+                
+                response_data = response.get_json()
+                assert response_data['success'] is False
+                assert 'ValueError' in str(mock_logger.call_args_list)
     
     def test_error_code_definitions(self):
         """Test that all error codes have proper definitions"""
@@ -133,25 +137,26 @@ class TestErrorHandlerDecorator:
         result = test_function()
         assert result == ({"success": True}, 200)
     
-    def test_decorator_file_management_error(self):
+    def test_decorator_file_management_error(self, app):
         """Test decorator handling FileManagementError"""
-        error_detail = ErrorDetail(
-            code=ErrorCode.FILE_NOT_PROVIDED,
-            message="Test error",
-            user_message="Test user error",
-            http_status=400
-        )
-        
-        @handle_file_management_errors
-        def test_function():
-            raise FileManagementError(error_detail)
-        
-        response, status_code = test_function()
-        assert status_code == 400
-        
-        response_data = response.get_json()
-        assert response_data['success'] is False
-        assert response_data['error_code'] == 'FILE_001'
+        with app.app_context():
+            error_detail = ErrorDetail(
+                code=ErrorCode.FILE_NOT_PROVIDED,
+                message="Test error",
+                user_message="Test user error",
+                http_status=400
+            )
+            
+            @handle_file_management_errors
+            def test_function():
+                raise FileManagementError(error_detail)
+            
+            response, status_code = test_function()
+            assert status_code == 400
+            
+            response_data = response.get_json()
+            assert response_data['success'] is False
+            assert response_data['error_code'] == 'FILE_001'
     
     def test_decorator_value_error_storage(self):
         """Test decorator handling ValueError with storage configuration"""

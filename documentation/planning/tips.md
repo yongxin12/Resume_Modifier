@@ -28,6 +28,8 @@ And then Break down tasks according to requirements and implement new features u
 Use task tracking documents to record all items to ensure progress is made.
 
 
+Optimize and standardize my prompt to enable more structured and precise task decomposition and execution.
+
 TODO:
 Continue completing the remaining tasks. Good luck, and thank you!
 

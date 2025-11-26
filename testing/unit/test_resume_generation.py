@@ -56,7 +56,8 @@ class TestResumeGenerationService:
         generator = ResumeGenerator()
         keywords = generator.extract_job_keywords(sample_job_description)
         
-        expected_keywords = ['Python', 'Flask', 'Django', 'PostgreSQL', 'AWS', 'Bachelor', 'Computer Science']
+        # Expected keywords should match what's in sample_job_description fixture
+        expected_keywords = ['Python', 'Flask', 'Django', 'PostgreSQL', 'MySQL', 'Bachelor', 'Computer Science']
         
         for keyword in expected_keywords:
             assert keyword in keywords or keyword.lower() in [k.lower() for k in keywords]

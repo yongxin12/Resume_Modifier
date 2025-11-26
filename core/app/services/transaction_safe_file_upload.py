@@ -382,40 +382,60 @@ class TransactionSafeFileUploadService:
                 updated_at=datetime.utcnow()
             )
             
-            # Use explicit session management
-            db.session.begin()
+            # Use enhanced transaction management
+            from app.utils.transaction_manager import safe_database_transaction, reset_database_connection
+            
+            # Reset connection state first
+            reset_database_connection()
+            
             try:
-                db.session.add(resume_file)
-                db.session.flush()  # Get the ID without committing
+                # Use explicit transaction with proper error handling
+                with db.session.begin():
+                    db.session.add(resume_file)
+                    db.session.flush()  # Get the ID without committing
+                    
+                    # Transaction will auto-commit at end of with block
                 
-                # Handle thumbnail generation (separate operation)
-                self._generate_thumbnail_async(resume_file, storage_result['storage_result'])
-                
-                db.session.commit()
                 logger.info(f"✅ File record saved to database: ID {resume_file.id}")
+                
+                # Handle thumbnail generation (separate operation, after commit)
+                try:
+                    self._generate_thumbnail_async(resume_file, storage_result['storage_result'])
+                except Exception as thumb_error:
+                    logger.warning(f"Thumbnail generation failed: {thumb_error}")
                 
                 return {
                     'success': True,
                     'file_record': resume_file
                 }
                 
-            except (IntegrityError, SQLAlchemyError) as db_error:
-                db.session.rollback()
-                logger.error(f"Database error saving file record: {db_error}")
+            except IntegrityError as db_error:
+                logger.error(f"Database integrity error: {db_error}")
                 
                 # Handle specific constraint violations
                 if "unique constraint" in str(db_error).lower():
                     return {
                         'success': False,
                         'message': 'File with this name already exists',
-                        'error': 'DUPLICATE_FILENAME'
+                        'error': 'DUPLICATE_FILENAME',
+                        'error_type': 'integrity_error'
                     }
                 else:
                     return {
                         'success': False,
-                        'message': 'Database error occurred while saving file record',
-                        'error': str(db_error)
+                        'message': 'Database constraint violation',
+                        'error': str(db_error),
+                        'error_type': 'integrity_error'
                     }
+                    
+            except SQLAlchemyError as db_error:
+                logger.error(f"Database error saving file record: {db_error}")
+                return {
+                    'success': False,
+                    'message': 'Database error occurred while saving file record',
+                    'error': str(db_error),
+                    'error_type': 'database_error'
+                }
                 
         except Exception as e:
             # Ensure rollback on any error

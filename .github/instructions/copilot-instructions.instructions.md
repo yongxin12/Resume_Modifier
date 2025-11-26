@@ -32,29 +32,74 @@ Here’s a structured set of **Instructions & Rules** for this project:
 
 ## II. Project Structure Rules
 
-### Backend (Flask)
+### Directory Overview
 
 ```
-app/
- ├─ models/             # SQLAlchemy ORM models (e.g., User, Resume)
- ├─ services/           # Business logic (e.g., resume_ai.py for AI processing)
- ├─ utils/              # Shared helpers (e.g., validators, PDF parsers)
- ├─ response_template/  # Defines response schemas/structures
- ├─ tests/              # Pytest unit and integration tests
- ├─ server.py           # Main Flask application, API endpoint definitions
- ├─ extensions.py       # Flask extension initializations (db, migrate)
- └─ web.py              # Routes for web pages (if any)
-migrations/              # Alembic database migration scripts
+Resume_Modifier/
+├─ core/                    # Main application code (PYTHONPATH includes this)
+│   └─ app/                 # Flask application package
+│       ├─ api/             # API endpoint blueprints
+│       ├─ models/          # SQLAlchemy ORM models (User, ResumeFile, etc.)
+│       ├─ services/        # Business logic (file_category_service, resume_ai, etc.)
+│       ├─ utils/           # Shared helpers (jwt_utils, error_handler, validators)
+│       ├─ response_template/  # Response schemas/structures
+│       ├─ __init__.py      # App factory (create_app)
+│       ├─ extensions.py    # Flask extension initializations (db, migrate, login_manager)
+│       ├─ server.py        # Main API routes and endpoint definitions
+│       └─ web.py           # Web page routes (if any)
+│   └─ migrations/          # Alembic database migration scripts (PRIMARY)
+├─ testing/                 # All test files
+│   ├─ api/                 # API endpoint tests
+│   ├─ integration/         # Integration tests (Google Drive, Railway, OAuth)
+│   ├─ unit/                # Unit tests for services and models
+│   ├─ validation/          # Validation and documentation tests
+│   └─ debug/               # Debug test utilities
+├─ scripts/                 # Utility scripts
+│   ├─ database/            # Database maintenance scripts
+│   ├─ deployment/          # Deployment and Docker scripts
+│   ├─ maintenance/         # Admin and setup scripts
+│   └─ testing/             # Test runner scripts
+├─ documentation/           # Project documentation
+│   ├─ api/                 # OpenAPI specs and API docs
+│   ├─ architecture/        # System architecture docs
+│   ├─ deployment/          # Deployment guides
+│   └─ features/            # Feature documentation
+├─ configuration/           # Configuration files
+│   ├─ application/         # App configuration templates
+│   ├─ deployment/          # Docker and deployment configs
+│   └─ environment/         # Environment variable templates
+├─ archive/                 # Archived/deprecated files (do not use)
+│   ├─ scripts/             # Old fix/debug scripts
+│   ├─ documentation/       # Resolved issue reports
+│   └─ app_archived/        # Deprecated app files
+├─ conftest.py              # Pytest shared fixtures
+├─ pytest.ini               # Pytest configuration (pythonpath = core)
+├─ wsgi.py                  # WSGI entry point
+├─ railway_start.py         # Railway deployment entry point
+└─ README.md                # Project documentation
 ```
 
-**Rules**
+### Backend Rules (Flask)
 
-*   **Models**: Define all database tables as classes in the `app/models/` directory. Models must inherit from `db.Model`.
-*   **Business Logic**: Isolate complex logic and external service interactions (like AI calls) within the `app/services/` directory. API routes in `server.py` should call these services.
-*   **API Endpoints**: Define all API routes in `app/server.py`. Keep routes clean and focused on handling requests and responses.
-*   **Utilities**: Place reusable helper functions, such as PDF parsers (`parse_pdf.py`) and validators, in the `app/utils/` directory.
+*   **Application Code**: All Flask application code lives in `core/app/`. Imports use `from app.xxx import yyy` because PYTHONPATH includes `core/`.
+*   **Models**: Define all database tables as classes in `core/app/models/`. Models must inherit from `db.Model`.
+*   **Business Logic**: Isolate complex logic and external service interactions in `core/app/services/`. API routes should call these services.
+*   **API Endpoints**: Define API routes using blueprints in `core/app/api/` or in `core/app/server.py`. Use Flasgger decorators for Swagger documentation.
+*   **Utilities**: Place reusable helper functions in `core/app/utils/`.
 *   **Configuration**: Manage environment-specific settings using `.env` files. Do not commit secrets to the repository.
-*   **Dependencies**: Add all new Python packages to the `requirements.txt` file.
+*   **Dependencies**: Add all new Python packages to `core/requirements.txt`.
+
+### Testing Rules
+
+*   **Test Location**: All tests go in the `testing/` directory, organized by type (api, integration, unit, validation).
+*   **Test Naming**: Follow the `test_*.py` naming convention.
+*   **Fixtures**: Use shared fixtures from `conftest.py` in the project root.
+*   **Database Tests**: Use `db.init_app(app)` when creating test Flask apps with `flask_testing.TestCase`.
+
+### Scripts and Maintenance
+
+*   **New Scripts**: Place utility scripts in `scripts/` under the appropriate subdirectory.
+*   **Archived Files**: Do not modify files in `archive/`. These are kept for reference only.
 
 ---
 
@@ -88,11 +133,22 @@ migrations/              # Alembic database migration scripts
 ## VI. Testing Rules
 
 *   Use **Pytest** for all unit and integration tests.
+*   **Test Organization**:
+    *   `testing/api/` - API endpoint tests with mocked authentication
+    *   `testing/unit/` - Unit tests for services and models
+    *   `testing/integration/` - Integration tests (Google Drive, Railway, OAuth)
+    *   `testing/validation/` - Documentation and schema validation tests
+*   **Test Configuration**:
+    *   Use `pytest.ini` in project root (sets `pythonpath = core`)
+    *   Use shared fixtures from `conftest.py` in project root
+    *   For `flask_testing.TestCase`, always call `db.init_app(app)` in `create_app()`
+*   **Running Tests**:
+    *   Run all tests: `python -m pytest testing/ -v`
+    *   Run specific category: `python -m pytest testing/api/ -v`
 *   Write tests for:
-    *   **Models**: Ensure model properties and relationships work as expected.
-    *   **Services**: Test business logic, especially AI-related functions.
+    *   **Models**: Ensure model properties, relationships, and defaults work correctly.
+    *   **Services**: Test business logic with proper error handling.
     *   **API Endpoints**: Verify request/response behavior, status codes, and authentication.
-*   Place test files in the `app/tests/` directory, following the `test_*.py` naming convention.
 *   Aim for high test coverage to ensure code quality and stability.
 
 ---

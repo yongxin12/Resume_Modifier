@@ -55,41 +55,44 @@ class TestThumbnailService:
         assert ThumbnailService.THUMBNAIL_QUALITY == 85
         assert ThumbnailService.THUMBNAIL_FORMAT == 'JPEG'
     
-    def test_get_thumbnail_path(self, temp_directory):
+    def test_get_thumbnail_path(self, app, temp_directory):
         """Test thumbnail path generation"""
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': temp_directory}
-            
-            path = ThumbnailService.get_thumbnail_path(42)
-            expected_path = os.path.join(temp_directory, 'thumbnails', '42.jpg')
-            
-            assert path == expected_path
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': temp_directory}
+                
+                path = ThumbnailService.get_thumbnail_path(42)
+                expected_path = os.path.join(temp_directory, 'thumbnails', '42.jpg')
+                
+                assert path == expected_path
     
-    def test_ensure_thumbnail_directory_creates_directory(self, temp_directory):
+    def test_ensure_thumbnail_directory_creates_directory(self, app, temp_directory):
         """Test that thumbnail directory is created if it doesn't exist"""
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': temp_directory}
-            
-            thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
-            assert not os.path.exists(thumbnail_dir)
-            
-            ThumbnailService.ensure_thumbnail_directory()
-            
-            assert os.path.exists(thumbnail_dir)
-            assert os.path.isdir(thumbnail_dir)
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': temp_directory}
+                
+                thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
+                assert not os.path.exists(thumbnail_dir)
+                
+                ThumbnailService.ensure_thumbnail_directory()
+                
+                assert os.path.exists(thumbnail_dir)
+                assert os.path.isdir(thumbnail_dir)
     
-    def test_ensure_thumbnail_directory_existing_directory(self, temp_directory):
+    def test_ensure_thumbnail_directory_existing_directory(self, app, temp_directory):
         """Test that existing thumbnail directory is not modified"""
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': temp_directory}
-            
-            thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
-            os.makedirs(thumbnail_dir)
-            
-            # Should not raise an exception
-            ThumbnailService.ensure_thumbnail_directory()
-            
-            assert os.path.exists(thumbnail_dir)
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': temp_directory}
+                
+                thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
+                os.makedirs(thumbnail_dir)
+                
+                # Should not raise an exception
+                ThumbnailService.ensure_thumbnail_directory()
+                
+                assert os.path.exists(thumbnail_dir)
     
     @patch('app.services.thumbnail_service.pdf2image.convert_from_path')
     def test_generate_thumbnail_success(self, mock_convert, temp_directory, sample_pdf_path):
@@ -172,44 +175,47 @@ class TestThumbnailService:
         
         assert result is False
     
-    def test_get_default_thumbnail_path(self):
+    def test_get_default_thumbnail_path(self, app):
         """Test getting default thumbnail path"""
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': '/uploads'}
-            
-            default_path = ThumbnailService.get_default_thumbnail()
-            
-            assert 'default_thumbnail.jpg' in default_path
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': '/uploads'}
+                
+                default_path = ThumbnailService.get_default_thumbnail()
+                
+                assert 'default_thumbnail.jpg' in default_path
     
-    def test_cleanup_thumbnail_removes_file(self, temp_directory):
+    def test_cleanup_thumbnail_removes_file(self, app, temp_directory):
         """Test that cleanup removes thumbnail file"""
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': temp_directory}
-            
-            # Create a dummy thumbnail file
-            thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
-            os.makedirs(thumbnail_dir, exist_ok=True)
-            thumbnail_path = os.path.join(thumbnail_dir, '42.jpg')
-            
-            with open(thumbnail_path, 'w') as f:
-                f.write('dummy thumbnail')
-            
-            assert os.path.exists(thumbnail_path)
-            
-            result = ThumbnailService.cleanup_thumbnail(42)
-            
-            assert result is True
-            assert not os.path.exists(thumbnail_path)
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': temp_directory}
+                
+                # Create a dummy thumbnail file
+                thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
+                os.makedirs(thumbnail_dir, exist_ok=True)
+                thumbnail_path = os.path.join(thumbnail_dir, '42.jpg')
+                
+                with open(thumbnail_path, 'w') as f:
+                    f.write('dummy thumbnail')
+                
+                assert os.path.exists(thumbnail_path)
+                
+                result = ThumbnailService.cleanup_thumbnail(42)
+                
+                assert result is True
+                assert not os.path.exists(thumbnail_path)
     
-    def test_cleanup_thumbnail_nonexistent_file(self, temp_directory):
+    def test_cleanup_thumbnail_nonexistent_file(self, app, temp_directory):
         """Test cleanup with nonexistent thumbnail file"""
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': temp_directory}
-            
-            result = ThumbnailService.cleanup_thumbnail(999)
-            
-            # Should not fail even if file doesn't exist
-            assert result is True
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': temp_directory}
+                
+                result = ThumbnailService.cleanup_thumbnail(999)
+                
+                # Should not fail even if file doesn't exist
+                assert result is True
     
     @patch('app.services.thumbnail_service.pdf2image.convert_from_path')
     def test_generate_thumbnail_creates_output_directory(self, mock_convert, temp_directory, sample_pdf_path):
@@ -232,41 +238,42 @@ class TestThumbnailService:
         assert result is True
         assert os.path.exists(output_dir)
     
-    def test_thread_safety_multiple_directory_creation(self, temp_directory):
+    def test_thread_safety_multiple_directory_creation(self, app, temp_directory):
         """Test thread safety when multiple processes create thumbnail directory"""
         import threading
         import time
         
-        with patch('app.services.thumbnail_service.current_app') as mock_app:
-            mock_app.config = {'UPLOAD_FOLDER': temp_directory}
-            
-            results = []
-            
-            def create_directory():
-                try:
-                    ThumbnailService.ensure_thumbnail_directory()
-                    results.append(True)
-                except Exception as e:
-                    results.append(False)
-            
-            # Create multiple threads trying to create directory simultaneously
-            threads = []
-            for i in range(5):
-                thread = threading.Thread(target=create_directory)
-                threads.append(thread)
-                thread.start()
-            
-            # Wait for all threads to complete
-            for thread in threads:
-                thread.join()
-            
-            # All should succeed
-            assert all(results)
-            assert len(results) == 5
-            
-            # Directory should exist
-            thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
-            assert os.path.exists(thumbnail_dir)
+        with app.app_context():
+            with patch('app.services.thumbnail_service.current_app') as mock_app:
+                mock_app.config = {'UPLOAD_FOLDER': temp_directory}
+                
+                results = []
+                
+                def create_directory():
+                    try:
+                        ThumbnailService.ensure_thumbnail_directory()
+                        results.append(True)
+                    except Exception as e:
+                        results.append(False)
+                
+                # Create multiple threads trying to create directory simultaneously
+                threads = []
+                for i in range(5):
+                    thread = threading.Thread(target=create_directory)
+                    threads.append(thread)
+                    thread.start()
+                
+                # Wait for all threads to complete
+                for thread in threads:
+                    thread.join()
+                
+                # All should succeed
+                assert all(results)
+                assert len(results) == 5
+                
+                # Directory should exist
+                thumbnail_dir = os.path.join(temp_directory, 'thumbnails')
+                assert os.path.exists(thumbnail_dir)
 
 
 if __name__ == '__main__':
