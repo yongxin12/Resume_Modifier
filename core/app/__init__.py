@@ -61,8 +61,38 @@ def create_app(config=None):
     
     # Configure Flask sessions for Docker environment (will be done after extensions are initialized)
     
+    # CORS Configuration - Allow frontend origins including Lovable
+    cors_origins = os.getenv('CORS_ORIGINS', '*')
+    if cors_origins != '*':
+        # Parse comma-separated origins
+        allowed_origins = [origin.strip() for origin in cors_origins.split(',')]
+    else:
+        allowed_origins = '*'
+    
+    # Always include Lovable frontend origins for development/production
+    lovable_origins = [
+        'https://bf2cf7ea-4663-40a3-94f2-8b02671da1f2.lovableproject.com',
+        'https://id-preview--bf2cf7ea-4663-40a3-94f2-8b02671da1f2.lovable.app',
+    ]
+    
+    if allowed_origins == '*':
+        # If wildcard, keep it as wildcard (allows all origins)
+        final_origins = '*'
+    else:
+        # Merge configured origins with Lovable origins
+        final_origins = list(set(allowed_origins + lovable_origins))
+    
     # Initialize extensions
-    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+    CORS(app, resources={
+        r"/*": {
+            "origins": final_origins,
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+            "allow_headers": ["Authorization", "Content-Type", "X-Requested-With", "Accept"],
+            "expose_headers": ["Content-Range", "X-Content-Range"],
+            "supports_credentials": True,
+            "max_age": 600
+        }
+    })
     swagger = Swagger(app)
     db.init_app(app)
     
@@ -108,7 +138,10 @@ def create_app(config=None):
     # Register blueprints
     from app.server import api
     from app.web import web
+    from app.api.file_category_endpoints import file_category_bp
+    
     app.register_blueprint(api)
     app.register_blueprint(web)
+    app.register_blueprint(file_category_bp, url_prefix='/api/files')
     
     return app 
