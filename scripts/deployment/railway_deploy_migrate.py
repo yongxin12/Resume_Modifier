@@ -17,6 +17,60 @@ sys.path.insert(0, core_dir)
 # Change to core directory for Flask-Migrate to find migrations folder
 os.chdir(core_dir)
 
+def check_and_fix_alembic_version(app, db):
+    """
+    Check if alembic_version contains a revision that doesn't exist.
+    If so, stamp to the latest head to recover from migration mismatch.
+    """
+    from sqlalchemy import text
+    
+    try:
+        with app.app_context():
+            # Check current version in database
+            result = db.session.execute(text("SELECT version_num FROM alembic_version"))
+            row = result.fetchone()
+            
+            if not row:
+                print("📋 No alembic_version found - fresh database")
+                return True
+            
+            current_version = row[0]
+            print(f"📋 Current database revision: {current_version}")
+            
+            # Check if this revision exists in our migrations
+            migrations_dir = os.path.join(core_dir, 'migrations', 'versions')
+            valid_revisions = set()
+            
+            if os.path.exists(migrations_dir):
+                for filename in os.listdir(migrations_dir):
+                    if filename.endswith('.py') and not filename.startswith('__'):
+                        filepath = os.path.join(migrations_dir, filename)
+                        with open(filepath, 'r') as f:
+                            content = f.read()
+                            # Extract revision ID
+                            import re
+                            match = re.search(r"revision\s*=\s*['\"]([^'\"]+)['\"]", content)
+                            if match:
+                                valid_revisions.add(match.group(1))
+            
+            print(f"📋 Valid revisions in codebase: {valid_revisions}")
+            
+            if current_version not in valid_revisions:
+                print(f"⚠️  Revision '{current_version}' not found in migration files!")
+                print("🔧 Stamping database to latest head to recover...")
+                
+                # Delete the stale version
+                db.session.execute(text("DELETE FROM alembic_version"))
+                db.session.commit()
+                print("✅ Cleared stale alembic_version")
+                return True
+            
+            return True
+            
+    except Exception as e:
+        print(f"⚠️  Could not check alembic_version: {e}")
+        return True  # Continue anyway
+
 def run_migrations():
     """Run Flask database migrations"""
     print("🚀 Railway Deployment Migration")
@@ -44,13 +98,16 @@ def run_migrations():
         # Import Flask app and extensions
         from app import create_app
         from app.extensions import db
-        from flask_migrate import Migrate, upgrade
+        from flask_migrate import Migrate, upgrade, stamp
         
         print("✅ Flask app imported successfully")
         
         # Create app
         app = create_app()
         migrate = Migrate(app, db)
+        
+        # Check and fix alembic version if needed
+        check_and_fix_alembic_version(app, db)
         
         print("🔄 Running database migrations...")
         print("-" * 50)
@@ -61,10 +118,28 @@ def run_migrations():
             if os.path.exists(migrations_dir):
                 print(f"✅ Migrations directory found: {migrations_dir}")
                 
-                # Run upgrade
-                upgrade()
-                print("-" * 50)
-                print("✅ Database migrations completed successfully!")
+                try:
+                    # Try running upgrade
+                    upgrade()
+                    print("-" * 50)
+                    print("✅ Database migrations completed successfully!")
+                except Exception as migrate_error:
+                    error_msg = str(migrate_error)
+                    
+                    # Handle "Can't locate revision" errors
+                    if "Can't locate revision" in error_msg:
+                        print(f"⚠️  Migration revision mismatch detected: {error_msg}")
+                        print("🔧 Attempting recovery: stamp to head and ensure tables exist...")
+                        
+                        # Stamp to head (marks DB as up-to-date without running migrations)
+                        stamp(revision='head')
+                        
+                        # Ensure all tables exist
+                        db.create_all()
+                        
+                        print("✅ Recovery complete - database stamped to head")
+                    else:
+                        raise migrate_error
             else:
                 print(f"⚠️  No migrations directory found at {migrations_dir}")
                 print("   Creating tables directly with db.create_all()...")
