@@ -377,18 +377,22 @@ class GoogleDriveAdminService:
     
     def _share_files_with_user(self, file_ids: List[str], user_email: str, doc_file_id: str = None) -> Dict[str, Any]:
         """
-        Share files with user granting edit permissions (API-05g).
+        Share files publicly with "Anyone with the link" access (API-05g).
+        
+        Per functional specification API-05g: "makes publicly editable via link"
+        This sets General Access to "Anyone with the link" with editor permissions,
+        so users don't need to request access or have a Google account.
         
         Args:
             file_ids: List of file IDs to share
-            user_email: Email address of the user
+            user_email: Email address of the user (for tracking, not for permission)
             doc_file_id: Google Doc file ID if available
             
         Returns:
             dict: Sharing result information
         """
-        if not self.enable_sharing or not user_email:
-            return {'sharing_skipped': True, 'reason': 'Sharing disabled or no email provided'}
+        if not self.enable_sharing:
+            return {'sharing_skipped': True, 'reason': 'Sharing disabled'}
         
         drive_service = self._get_drive_service()
         shared_files = []
@@ -401,23 +405,22 @@ class GoogleDriveAdminService:
         
         for file_id in all_file_ids:
             try:
-                # Create permission for the user
+                # Create "Anyone with the link" permission (public access)
+                # This allows anyone with the link to access without requesting permission
                 permission = {
-                    'type': 'user',
-                    'role': self.default_permissions,  # 'writer' allows editing
-                    'emailAddress': user_email
+                    'type': 'anyone',  # Changed from 'user' to 'anyone'
+                    'role': self.default_permissions  # 'writer' allows editing
                 }
                 
-                # Apply permission
+                # Apply permission - no email needed for 'anyone' type
                 drive_service.permissions().create(
                     fileId=file_id,
                     body=permission,
-                    sendNotificationEmail=False,  # Don't spam user with notifications
-                    fields='id, type, role, emailAddress'
+                    fields='id, type, role'
                 ).execute()
                 
                 shared_files.append(file_id)
-                logger.info(f"Shared file {file_id} with {user_email} ({self.default_permissions} access)")
+                logger.info(f"Set file {file_id} to 'Anyone with the link' ({self.default_permissions} access)")
                 
             except HttpError as e:
                 error_msg = f"Failed to share file {file_id}: {str(e)}"
@@ -429,11 +432,13 @@ class GoogleDriveAdminService:
                 sharing_errors.append({'file_id': file_id, 'error': error_msg})
         
         return {
-            'shared_with': user_email,
+            'shared_with': user_email,  # Keep for reference/tracking
+            'access_type': 'anyone_with_link',  # New field to indicate public access
             'shared_files': shared_files,
             'sharing_errors': sharing_errors,
             'permissions': self.default_permissions,
-            'sharing_successful': len(shared_files) > 0
+            'sharing_successful': len(shared_files) > 0,
+            'message': f'Files accessible to anyone with the link ({self.default_permissions} access)'
         }
     
     def get_user_files(self, user_id: int, limit: int = 100) -> Dict[str, Any]:
