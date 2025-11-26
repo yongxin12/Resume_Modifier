@@ -21,13 +21,21 @@ class DatabaseManager:
         self.cursor = None
         
     def _get_database_url(self) -> str:
-        """Get database URL from Railway environment"""
-        database_url = (
-            os.environ.get('DATABASE_PUBLIC_URL') or 
-            os.environ.get('DATABASE_URL')
-        )
+        """Get database URL from Railway environment with local access support"""
+        # Try Railway public URL first (accessible from local machine)
+        database_url = os.environ.get('DATABASE_PUBLIC_URL')
+        
         if not database_url:
-            raise ValueError("DATABASE_URL not found in environment variables")
+            # Fallback to standard DATABASE_URL (for production deployments)
+            database_url = os.environ.get('DATABASE_URL')
+        
+        if not database_url:
+            raise ValueError(
+                "DATABASE_URL not found in environment variables.\n"
+                "For local Railway access, ensure you're running: railway run python3 database_manager.py\n"
+                "For local development, set: export DATABASE_URL='postgresql://user:pass@localhost:5432/dbname'"
+            )
+        
         return database_url
     
     def connect(self) -> bool:
